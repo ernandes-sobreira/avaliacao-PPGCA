@@ -1,4 +1,4 @@
-import {authReady,google,identity,voterKey} from './auth.js';
+import {authReady,firebaseConfig,google,identity,voterKey} from './auth.js';
 const courses = [
 'Epistemologia Ambiental','Meio Ambiente e Sustentabilidade nos Biomas, Pantanal, Amazônia e Cerrado','Elaboração de Tese','Ciências Sociais e o Desenvolvimento Regional','Seminários de Mestrado','Seminários de Doutorado','Métodos e Técnicas para o Estudo da Diversidade Cultural nos Biomas Matogrossenses','Climas, mudanças climáticas e consequências ambientais','Saúde e Interações Ambientais','Agricultura, meio ambiente e desenvolvimento','Impactos ambientais de poluentes sobre a biodiversidade','Atributos do solo e a conservação ambiental','Etnobiologia e Etnoecologia','Paisagem e territorialização socioambiental','Indicadores biológicos como ferramenta de avaliação ambiental','Componentes ambientais, uso e gestão dos recursos hídricos','Conservação e uso sustentável da Biodiversidade no Pantanal, Amazônia e Cerrado','Geografia Política e Meio Ambiente na Amazônia','Pesquisa orientada','Estatística Aplicada à Ciências Ambientais I','Estatística Aplicada à Ciências Ambientais II','Avaliação de impacto de grandes empreendimentos e os riscos para a saúde humana','Ordenamento Territorial nas Fronteiras Políticas e nos Biomas Matogrossenses'
 ];
@@ -140,7 +140,7 @@ async function report(db,id,admin){
   return json({offer,stats:summarize(results),action:action?JSON.parse(action.data):null,...(admin?{comments:results.flatMap(r=>JSON.parse(r.data).comments.flatMap((value,i)=>value?[{prompt:prompts[i],value}]:[]))}:{})});
 }
 function client(config){
-  const {courses,groups,prompts,options,modalities,links}=config;
+  const {courses,groups,prompts,options,modalities,links,firebaseConfig}=config;
   const root=document.querySelector('main');
   let state;
   const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -177,7 +177,7 @@ function client(config){
   function page(body){root.innerHTML=body+'<p id="message" role="status"></p><div id="output"></div>';}
   const login=(view='vote')=>{
     const label=view==='manage'?'Entrar no painel com Google':'Entrar com Google · @unemat.br';
-    return state.googleReady?'<a class="button" href="/auth/google?view='+view+'">'+label+'</a>':'<button disabled>'+label+'</button><p class="hint">Aguardando a ativação do login no Google Workspace da UNEMAT.</p>';
+    return state.googleReady?'<button data-login="'+view+'">'+label+'</button>':'<button disabled>'+label+'</button><p class="hint">O login institucional está em configuração.</p>';
   };
   function catalog(){
     page('<section><span class="tag">MESTRADO E DOUTORADO</span><h2>Disciplinas do PPGCA</h2><p>As 23 disciplinas da matriz curricular e suas turmas abertas para avaliação.</p>'+field('Buscar disciplina','<input id="course-search" type="search" placeholder="Ex.: Estatística, Pantanal, Saúde">')+'<div id="catalog"></div><p><a href="'+links.matriz+'">Matriz curricular oficial</a></p></section>');
@@ -287,6 +287,36 @@ function client(config){
     try{if(!state)state=await api('start');document.querySelector('#session').innerHTML=state.email?'<form action="/auth/logout" method="post"><span>'+esc(state.email)+'</span> <button>Sair</button></form>':(state.googleReady?login():'');await views[key]();}
     catch(e){page('<section><h2>Serviço indisponível</h2><p>Tente novamente em instantes.</p></section>');message(e.message,true);}
   }
+  document.addEventListener('click',async event=>{
+    const button=event.target.closest('[data-login]');
+    if(!button)return;
+    button.disabled=true;
+    message('');
+    let auth,signOut;
+    try{
+      const [appModule,authModule]=await Promise.all([
+        import('https://www.gstatic.com/firebasejs/12.12.0/firebase-app.js'),
+        import('https://www.gstatic.com/firebasejs/12.12.0/firebase-auth.js')
+      ]);
+      const app=appModule.getApps()[0]||appModule.initializeApp(firebaseConfig);
+      auth=authModule.getAuth(app);
+      signOut=authModule.signOut;
+      await authModule.setPersistence(auth,authModule.inMemoryPersistence);
+      const provider=new authModule.GoogleAuthProvider();
+      provider.setCustomParameters({hd:'unemat.br',prompt:'select_account'});
+      const {user}=await authModule.signInWithPopup(auth,provider);
+      const response=await fetch('/auth/firebase',{method:'POST',headers:{Authorization:'Bearer '+await user.getIdToken()}});
+      const data=await response.json();
+      if(!response.ok)throw new Error(data.error);
+      state=await api('start');
+      await show(button.dataset.login);
+    }catch(error){
+      message(error.code==='auth/popup-blocked'?'Permita a janela de login do Google e tente novamente.':error.message,true);
+    }finally{
+      if(auth && signOut)await signOut(auth).catch(()=>{});
+      button.disabled=false;
+    }
+  });
   document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>show(b.dataset.view));
   const query=new URLSearchParams(location.search);
   const access=query.get('acesso');
@@ -321,8 +351,8 @@ export default {
       try{return await api(request,env,url);}
       catch(error){console.error(error.message);return fail('Não foi possível concluir a operação. Tente novamente.',500);}
     }
-    const headers={'X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','Content-Security-Policy':"default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'self'"};
-    if(url.pathname==='/app.js')return new Response('('+client.toString()+')('+JSON.stringify({courses,groups,prompts,options,modalities,links})+');',{headers:{...headers,'Content-Type':'text/javascript; charset=utf-8'}});
+    const headers={'X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','Content-Security-Policy':"default-src 'none'; script-src 'self' https://www.gstatic.com https://apis.google.com; frame-src https://avaliacao-ppgca.firebaseapp.com; style-src 'unsafe-inline'; connect-src 'self' https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://www.googleapis.com https://apis.google.com https://www.gstatic.com; img-src 'self'; base-uri 'none'; form-action 'self'"};
+    if(url.pathname==='/app.js')return new Response('('+client.toString()+')('+JSON.stringify({courses,groups,prompts,options,modalities,links,firebaseConfig})+');',{headers:{...headers,'Content-Type':'text/javascript; charset=utf-8'}});
     if(url.pathname==='/')return new Response(html,{headers:{...headers,'Content-Type':'text/html; charset=utf-8'}});
     return new Response('Página não encontrada',{status:404});
   }
