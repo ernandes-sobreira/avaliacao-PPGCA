@@ -39,6 +39,21 @@ function redirect(location,cookies=[]){
   for(const value of cookies)headers.append('Set-Cookie',value);
   return new Response(null,{status:303,headers});
 }
+function decode(part){
+  try{return JSON.parse(new TextDecoder().decode(bytes(part)));}catch{return null;}
+}
+let firebaseKeys;
+async function firebaseKey(kid){
+  if(!firebaseKeys || firebaseKeys.expires<=Date.now()){
+    const response=await fetch('https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com',{redirect:'error'});
+    if(!response.ok)throw new Error('Firebase signing keys HTTP '+response.status);
+    const {keys}=await response.json();
+    const ttl=Number(response.headers.get('Cache-Control')?.match(/max-age=(\d+)/)?.[1]||0);
+    firebaseKeys={keys,expires:Date.now()+ttl*1000};
+  }
+  const jwk=firebaseKeys.keys.find(key=>key.kid===kid && key.kty==='RSA');
+  return jwk ? crypto.subtle.importKey('jwk',jwk,{name:'RSASSA-PKCS1-v1_5',hash:'SHA-256'},false,['verify']) : null;
+}
 export async function google(request,env,url){
   if(request.method!=='POST' || request.headers.get('Origin')!==url.origin)return new Response(null,{status:403});
   if(url.pathname==='/auth/logout')return redirect('/',[cookieHeader('__Host-ppgca','',0)]);
@@ -47,24 +62,27 @@ export async function google(request,env,url){
   try{
     const authorization=request.headers.get('Authorization')||'';
     if(authorization.length>6000 || !/^Bearer [\w.-]+$/.test(authorization))return reply({error:'Credencial de login inválida.'},401);
-    const idToken=authorization.slice(7);
-    const lookup=await fetch('https://identitytoolkit.googleapis.com/v1/accounts:lookup?key='+firebaseConfig.apiKey,{
-      method:'POST',redirect:'error',headers:{'Content-Type':'application/json'},body:JSON.stringify({idToken})
-    });
-    if(!lookup.ok)return reply({error:'O Firebase recusou a sessão. Entre novamente.'},401);
-    const {users}=await lookup.json();
-    const user=users?.[0];
-    const claims=JSON.parse(new TextDecoder().decode(bytes(idToken.split('.')[1])));
+    const [head,payload,signature,...extra]=authorization.slice(7).split('.');
+    if(!head || !payload || !signature || extra.length)return reply({error:'Credencial de login inválida.'},401);
+    const header=decode(head), claims=decode(payload);
     const now=Math.floor(Date.now()/1000);
-    if(claims.aud!==firebaseConfig.projectId || claims.iss!=='https://securetoken.google.com/'+firebaseConfig.projectId ||
-       !Number.isFinite(claims.exp) || claims.exp<=now || claims.sub!==user?.localId || claims.firebase?.sign_in_provider!=='google.com' ||
-       claims.email_verified!==true || user?.emailVerified!==true || user.disabled || claims.email!==user.email ||
-       !/^[^@\s]+@unemat\.br$/i.test(user.email||'')){
+    if(!header || !claims || header.alg!=='RS256' || typeof header.kid!=='string' ||
+       claims.aud!==firebaseConfig.projectId || claims.iss!=='https://securetoken.google.com/'+firebaseConfig.projectId ||
+       !Number.isFinite(claims.exp) || claims.exp<=now || !Number.isFinite(claims.iat) || claims.iat>now+30 ||
+       !Number.isFinite(claims.auth_time) || claims.auth_time>now+30 ||
+       typeof claims.sub!=='string' || !claims.sub || claims.sub.length>128){
+      return reply({error:'Credencial de login inválida ou expirada.'},401);
+    }
+    const signingKey=await firebaseKey(header.kid);
+    if(!signingKey || !await crypto.subtle.verify('RSASSA-PKCS1-v1_5',signingKey,bytes(signature),encoder.encode(head+'.'+payload))){
+      return reply({error:'O Firebase não confirmou a assinatura. Entre novamente.'},401);
+    }
+    const sub=claims.firebase?.identities?.['google.com']?.[0];
+    if(claims.firebase?.sign_in_provider!=='google.com' || typeof sub!=='string' || !sub ||
+       claims.email_verified!==true || !/^[^@\s]+@unemat\.br$/i.test(claims.email||'')){
       return reply({error:'Use uma conta Google verificada @unemat.br.'},403);
     }
-    const sub=user.providerUserInfo?.find(p=>p.providerId==='google.com')?.rawId;
-    if(typeof sub!=='string' || !sub)return reply({error:'O Firebase não confirmou a identidade Google.'},403);
-    const session=await sign(env.SESSION_SECRET,{kind:'session',email:user.email.toLowerCase(),email_verified:true,hd:domain,sub,exp:Date.now()+28800000});
+    const session=await sign(env.SESSION_SECRET,{kind:'session',email:claims.email.toLowerCase(),email_verified:true,hd:domain,sub,exp:Date.now()+28800000});
     return reply({ok:true},200,{'Set-Cookie':cookieHeader('__Host-ppgca',session,28800)});
-  }catch{return reply({error:'Não foi possível confirmar a entrada. Tente novamente.'},502);}
+  }catch(error){console.error('Firebase verification:',error.message);return reply({error:'O servidor não conseguiu consultar as chaves do Firebase. Tente novamente.'},502);}
 }
