@@ -15,6 +15,13 @@
       "when": 1794225600000,
       "tag": "0001_identificacao",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1794239000000,
+      "tag": "0002_convites",
+      "breakpoints": true
     }
   ]
 }

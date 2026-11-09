@@ -24,7 +24,7 @@ async function verify(secret,value){
     return result.exp>Date.now()?result:null;
   }catch{return null;}
 }
-export const institutional = profile => profile?.email_verified===true && profile.hd===domain && typeof profile.sub==='string' && profile.sub.length>0 && /^[^@\s]+@unemat\.br$/i.test(profile.email||'');
+export const institutional = profile => profile?.email_verified===true && profile.hd===domain && typeof profile.sub==='string' && profile.sub.length>0 && /^[^@\s]+@[^@\s]+$/i.test(profile.email||'');
 export async function identity(request,env){
   if(!ready(env))return null;
   const result=await verify(env.SESSION_SECRET,cookie(request,'__Host-ppgca'));
@@ -79,8 +79,8 @@ export async function google(request,env,url){
     }
     const sub=claims.firebase?.identities?.['google.com']?.[0];
     if(claims.firebase?.sign_in_provider!=='google.com' || typeof sub!=='string' || !sub ||
-       claims.email_verified!==true || !/^[^@\s]+@unemat\.br$/i.test(claims.email||'')){
-      return reply({error:'Use uma conta Google verificada @unemat.br.'},403);
+       claims.email_verified!==true || !/^[^@\s]+@[^@\s]+$/i.test(claims.email||'')){
+      return reply({error:'Use uma conta Google com e-mail verificado.'},403);
     }
     const session=await sign(env.SESSION_SECRET,{kind:'session',email:claims.email.toLowerCase(),email_verified:true,hd:domain,sub,exp:Date.now()+28800000});
     return reply({ok:true},200,{'Set-Cookie':cookieHeader('__Host-ppgca',session,28800)});
