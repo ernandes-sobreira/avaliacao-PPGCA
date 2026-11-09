@@ -43,7 +43,8 @@ export async function google(request,env,url){
     const state=b64(crypto.getRandomValues(new Uint8Array(32)));
     const verifier=b64(crypto.getRandomValues(new Uint8Array(32)));
     const challenge=b64(new Uint8Array(await crypto.subtle.digest('SHA-256',encoder.encode(verifier))));
-    const flow=await sign(env.SESSION_SECRET,{kind:'oauth',state,verifier,exp:Date.now()+600000});
+    const view=url.searchParams.get('view')==='manage'?'manage':'vote';
+    const flow=await sign(env.SESSION_SECRET,{kind:'oauth',state,verifier,view,exp:Date.now()+600000});
     const params=new URLSearchParams({client_id:env.GOOGLE_CLIENT_ID,redirect_uri,response_type:'code',scope:'openid email',hd:domain,prompt:'select_account',state,code_challenge:challenge,code_challenge_method:'S256'});
     return redirect('https://accounts.google.com/o/oauth2/v2/auth?'+params,[cookieHeader('__Host-ppgca-flow',flow,600)]);
   }
@@ -62,6 +63,6 @@ export async function google(request,env,url){
     const profile=await user.json();
     if(!institutional(profile))return redirect('/?acesso=dominio',[clear,cookieHeader('__Host-ppgca','',0)]);
     const session=await sign(env.SESSION_SECRET,{kind:'session',email:profile.email.toLowerCase(),email_verified:true,hd:domain,sub:profile.sub,exp:Date.now()+28800000});
-    return redirect('/?acesso=ok',[clear,cookieHeader('__Host-ppgca',session,28800)]);
+    return redirect(flow.view==='manage'?'/?painel=1&acesso=ok':'/?acesso=ok',[clear,cookieHeader('__Host-ppgca',session,28800)]);
   }catch{return redirect('/?acesso=erro',[clear]);}
 }
