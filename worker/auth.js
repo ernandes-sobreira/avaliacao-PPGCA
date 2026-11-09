@@ -45,7 +45,7 @@ function decode(part){
 let firebaseKeys;
 async function firebaseKey(kid){
   if(!firebaseKeys || firebaseKeys.expires<=Date.now()){
-    const response=await fetch('https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com',{redirect:'error'});
+    const response=await fetch('https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com',{redirect:'manual'});
     if(!response.ok)throw new Error('Firebase signing keys HTTP '+response.status);
     const {keys}=await response.json();
     const ttl=Number(response.headers.get('Cache-Control')?.match(/max-age=(\d+)/)?.[1]||0);
