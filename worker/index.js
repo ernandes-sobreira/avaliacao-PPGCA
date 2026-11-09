@@ -36,6 +36,28 @@ function summarize(rows) {
     return {title,index:means.length>=protection ? 25*(means.reduce((a,b)=>a+b,0)/means.length-1) : null,n:means.length,items:questions.map((q,j)=>({q,...stat(ballots.map(b=>b.ratings[i][j]))}))};
   })};
 }
+const themeRules=[
+  ['Aulas práticas e campo',/\b(pratic\w*|campo|laboratorio\w*|visita\w*)\b/],
+  ['Carga horária e calendário',/\b(carga horaria|tempo|prazo\w*|calendario|horario\w*|intensiv\w*)\b/],
+  ['Ementa e bibliografia',/\b(ementa|conteudo\w*|bibliograf\w*|leituras?|referencias?)\b/],
+  ['Avaliação e devolutivas',/\b(avaliac\w*|devolutiv\w*|feedback|criterio\w*|prova\w*)\b/],
+  ['Didática e participação',/\b(didatic\w*|metodologi\w*|explicac\w*|participac\w*|debate\w*)\b/],
+  ['Infraestrutura e acesso',/\b(infraestrutura|acessib\w*|equipamento\w*|internet|sala\w*|material|materiais)\b/]
+];
+function feedback(rows){
+  const counts=prompts.map(prompt=>({prompt,n:0,themes:themeRules.map(([label])=>({label,n:0}))}));
+  for(const row of rows){
+    const comments=JSON.parse(row.data).comments||[];
+    counts.forEach((entry,i)=>{
+      const value=comments[i];
+      if(!value?.trim())return;
+      entry.n++;
+      const normalized=value.normalize('NFD').replace(/\p{M}/gu,'').toLowerCase();
+      themeRules.forEach(([,rule],j)=>{if(rule.test(normalized))entry.themes[j].n++;});
+    });
+  }
+  return counts.map(entry=>({...entry,themes:entry.themes.filter(x=>x.n).sort((a,b)=>b.n-a.n)}));
+}
 const sigaaUrl='https://sigaa.unemat.br/sigaa/public/programa/turma.jsf?id=655&lc=pt_BR';
 const entities={"AElig":"Æ","Aacute":"Á","Acirc":"Â","Agrave":"À","Aring":"Å","Atilde":"Ã","Auml":"Ä","Ccedil":"Ç","ETH":"Ð","Eacute":"É","Ecirc":"Ê","Egrave":"È","Euml":"Ë","Iacute":"Í","Icirc":"Î","Igrave":"Ì","Iuml":"Ï","Ntilde":"Ñ","Oacute":"Ó","Ocirc":"Ô","Ograve":"Ò","Oslash":"Ø","Otilde":"Õ","Ouml":"Ö","THORN":"Þ","Uacute":"Ú","Ucirc":"Û","Ugrave":"Ù","Uuml":"Ü","Yacute":"Ý","aacute":"á","acirc":"â","acute":"´","aelig":"æ","agrave":"à","amp":"&","aring":"å","atilde":"ã","auml":"ä","brvbar":"¦","ccedil":"ç","cedil":"¸","cent":"¢","copy":"©","curren":"¤","deg":"°","divide":"÷","eacute":"é","ecirc":"ê","egrave":"è","eth":"ð","euml":"ë","frac12":"½","frac14":"¼","frac34":"¾","gt":">","iacute":"í","icirc":"î","iexcl":"¡","igrave":"ì","iquest":"¿","iuml":"ï","laquo":"«","lt":"<","macr":"¯","micro":"µ","middot":"·","nbsp":" ","not":"¬","ntilde":"ñ","oacute":"ó","ocirc":"ô","ograve":"ò","ordf":"ª","ordm":"º","oslash":"ø","otilde":"õ","ouml":"ö","para":"¶","plusmn":"±","pound":"£","quot":"\"","raquo":"»","reg":"®","sect":"§","shy":"­","sup1":"¹","sup2":"²","sup3":"³","szlig":"ß","thorn":"þ","times":"×","uacute":"ú","ucirc":"û","ugrave":"ù","uml":"¨","uuml":"ü","yacute":"ý","yen":"¥","yuml":"ÿ"};
 const htmlText=value=>value.replace(/<[^>]*>/g,' ').replace(/&(#x[\da-f]+|#\d+|\w+);/gi,(match,key)=>{
@@ -135,6 +157,20 @@ async function api(request,env,url) {
     const {results}=await db.prepare('SELECT o.*, (SELECT COUNT(*) FROM answers a WHERE a.offer=o.id) AS received FROM offers o ORDER BY term DESC, course').all();
     return json({offers:results});
   }
+  if(path==='/api/dashboard'){
+    const term=clean(b.term,6);
+    if(term && !/^20\d\d\.[12]$/.test(term))return fail('Semestre inválido.');
+    const {results}=await db.prepare('SELECT a.offer,a.data FROM answers a JOIN offers o ON o.id=a.offer WHERE ?=\'\' OR o.term=?').bind(term,term).all();
+    const byOffer=new Map();
+    for(const row of results){
+      if(!byOffer.has(row.offer))byOffer.set(row.offer,[]);
+      byOffer.get(row.offer).push(row);
+    }
+    return json({stats:summarize(results),feedback:feedback(results),classes:Object.fromEntries([...byOffer].map(([id,rows])=>{
+      const stats=summarize(rows);
+      return [id,{grade:stats.grade,axes:stats.groups.map(g=>g.index)}];
+    }))});
+  }
   if(path==='/api/import-sigaa'){
     const term=clean(b.term,6);
     if(!/^20\d\d\.[12]$/.test(term))return fail('Informe o semestre no formato 2026.2.');
@@ -188,7 +224,7 @@ async function report(db,id){
   if(!offer)return fail('Relatório indisponível.',403);
   const {results}=await db.prepare('SELECT data FROM answers WHERE offer=?').bind(id).all();
   const action=await db.prepare('SELECT data FROM actions WHERE offer=?').bind(id).first();
-  return json({offer,stats:summarize(results),action:action?JSON.parse(action.data):null,comments:results.flatMap(r=>JSON.parse(r.data).comments.flatMap((value,i)=>value?[{prompt:prompts[i],value}]:[]))});
+  return json({offer,stats:summarize(results),feedback:feedback(results),action:action?JSON.parse(action.data):null,comments:results.flatMap(r=>JSON.parse(r.data).comments.flatMap((value,i)=>value?[{prompt:prompts[i],value}]:[]))});
 }
 function client(config){
   const {courses,groups,prompts,options,modalities,links,firebaseConfig}=config;
@@ -278,12 +314,29 @@ function client(config){
       document.querySelector('#again').onclick=vote;
     });
   }
+  function assessment(stats){
+    const ranked=stats.groups.flatMap(g=>g.items).filter(item=>item.mean!==null).sort((a,b)=>b.mean-a.mean);
+    if(!ranked.length)return '<p class="hint">Os indicadores aparecem a partir de cinco respostas válidas por item ou eixo.</p>';
+    const itemList=items=>'<ul>'+items.map(item=>'<li>'+esc(item.q)+' <b>'+format(item.mean)+' / 5</b> · '+item.n+' válidas</li>').join('')+'</ul>';
+    const positive=ranked.filter(item=>item.mean>=4).slice(0,3);
+    const attention=ranked.filter(item=>item.mean<4).reverse().slice(0,3);
+    return '<div class="grid insight"><div><h3>Pontos fortes</h3>'+(positive.length?itemList(positive):'<p>Nenhum item com média de 4 ou mais.</p>')+'</div><div><h3>Pontos de atenção</h3>'+(attention.length?itemList(attention):'<p>Todos os itens com dados atingiram média 4.</p>')+'</div></div><small>Referência de leitura do painel · médias de 4 ou mais destacam pontos fortes. Abaixo de 4, os menores valores aparecem primeiro.</small>';
+  }
+  function axes(stats){
+    return '<div class="grid cards dashboard">'+stats.groups.map(g=>'<div><b>'+esc(g.title)+'</b><br><strong>'+format(g.index)+'</strong> / 100<br>'+(g.index===null?'':'<meter min="0" max="100" value="'+g.index+'" aria-label="'+esc(g.title)+'"></meter><br>')+'<small>'+g.n+' respostas válidas</small></div>').join('')+'</div>';
+  }
+  function voices(entries,comments){
+    return '<h3>O que os discentes dizem</h3><p>Menções por pergunta, identificadas por palavras-chave. Uma resposta pode mencionar mais de um tema. As contagens indicam assunto, sem inferir aprovação ou crítica.</p>'+
+      entries.map(e=>'<details'+(e.n?' open':'')+'><summary>'+esc(e.prompt)+' · '+e.n+' comentário(s)</summary>'+
+        (e.themes.length?'<ul>'+e.themes.map(t=>'<li>'+esc(t.label)+' · <b>'+t.n+'</b></li>').join('')+'</ul>':'<p>Sem temas identificados pelas palavras-chave.</p>')+
+        (comments?.length?'<details><summary>Ler respostas desta pergunta</summary>'+comments.filter(c=>c.prompt===e.prompt).map(c=>'<p class="quote">'+esc(c.value)+'</p>').join('')+'</details>':'')+'</details>').join('');
+  }
   function draw(result,admin){
     const {offer,stats,comments,action}=result;
     output().innerHTML='<section><span class="tag">RELATÓRIO POR TURMA</span><h2>'+esc(name(offer))+'</h2><p>'+esc(offer.teachers)+' · '+esc(offer.modality)+'</p><div class="grid cards"><div><strong>'+stats.n+' / '+(offer.enrolled||'—')+'</strong><br>Respostas / elegíveis</div><div><strong>'+(offer.enrolled?format(100*stats.n/offer.enrolled)+'%':'—')+'</strong><br>Participação</div><div><strong>'+format(stats.grade)+'</strong><br>Nota geral média / 10</div></div>'+
       (stats.n<5?'<p>Menos de cinco respostas. Os indicadores quantitativos ficam ocultos.</p>':'')+
-      stats.groups.map(g=>'<details><summary>'+esc(g.title)+' · '+format(g.index)+' / 100</summary>'+(g.index===null?'':'<meter min="0" max="100" value="'+g.index+'" aria-label="'+esc(g.title)+'"></meter>')+'<p>'+g.n+' respostas válidas no eixo.</p><div class="table"><table><thead><tr><th>Item</th><th>Média</th><th>Válidas</th><th>N/A</th><th>1 · 2 · 3 · 4 · 5</th></tr></thead><tbody>'+g.items.map(q=>'<tr><td>'+esc(q.q)+'</td><td>'+format(q.mean)+'</td><td>'+q.n+'</td><td>'+q.na+'</td><td>'+(q.counts?.join(' · ')||'—')+'</td></tr>').join('')+'</tbody></table></div></details>').join('')+
-      (admin?'<details><summary>Comentários confidenciais ('+comments.length+')</summary>'+comments.map(c=>'<p><b>'+esc(c.prompt)+'</b><br>'+esc(c.value)+'</p>').join('')+'</details><form id="action"><h3>Acompanhamento da melhoria</h3>'+field('Ação ou devolutiva','<textarea name="action" required maxlength="1200">'+esc(action?.action)+'</textarea>')+field('Responsável','<input name="owner" required maxlength="120" value="'+esc(action?.owner)+'">')+field('Prazo','<input name="due" type="date" required value="'+esc(action?.due)+'">')+field('Situação','<select name="status">'+['Proposta','Em andamento','Concluída'].map(x=>'<option'+(action?.status===x?' selected':'')+'>'+x+'</option>').join('')+'</select>')+buttons('Salvar acompanhamento')+'</form>':'')+'</section>';
+      axes(stats)+assessment(stats)+voices(result.feedback,comments)+'<h3>Distribuição das respostas por item</h3>'+stats.groups.map(g=>'<details><summary>'+esc(g.title)+' · '+format(g.index)+' / 100</summary>'+(g.index===null?'':'<meter min="0" max="100" value="'+g.index+'" aria-label="'+esc(g.title)+'"></meter>')+'<p>'+g.n+' respostas válidas no eixo.</p><div class="table"><table><thead><tr><th>Item</th><th>Média</th><th>Válidas</th><th>N/A</th><th>1 · 2 · 3 · 4 · 5</th></tr></thead><tbody>'+g.items.map(q=>'<tr><td>'+esc(q.q)+'</td><td>'+format(q.mean)+'</td><td>'+q.n+'</td><td>'+q.na+'</td><td>'+(q.counts?.join(' · ')||'—')+'</td></tr>').join('')+'</tbody></table></div></details>').join('')+
+      (admin?'<form id="action"><h3>Acompanhamento da melhoria</h3>'+field('Ação ou devolutiva','<textarea name="action" required maxlength="1200">'+esc(action?.action)+'</textarea>')+field('Responsável','<input name="owner" required maxlength="120" value="'+esc(action?.owner)+'">')+field('Prazo','<input name="due" type="date" required value="'+esc(action?.due)+'">')+field('Situação','<select name="status">'+['Proposta','Em andamento','Concluída'].map(x=>'<option'+(action?.status===x?' selected':'')+'>'+x+'</option>').join('')+'</select>')+buttons('Salvar acompanhamento')+'</form>':'')+'</section>';
     if(admin)form('action',async data=>{await api('action',{...data,offer:offer.id});message('Acompanhamento salvo.');});
   }
   async function manage(){
@@ -291,14 +344,14 @@ function client(config){
       page('<section><h2>Painel de análises</h2><p>Acesso à gestão das turmas, aos indicadores e aos comentários. Use a conta institucional autorizada.</p>'+(state.email?'<p class="hint">A conta '+esc(state.email)+' não tem acesso ao painel.</p>':'')+login('manage')+'</section>');
       return;
     }
-    page('<section><span class="tag">GESTÃO</span><h2>Painel de resultados</h2><div id="dashboard"></div><details><summary>Gerenciar ofertas</summary><form id="sigaa"><div class="grid">'+field('Semestre para importar do SIGAA','<input name="term" placeholder="2026.2" pattern="20[0-9]{2}[.][12]" required>')+'</div>'+buttons('Importar turmas do SIGAA')+'</form><details><summary>Cadastrar turma</summary><form id="create"><div class="grid">'+
+    page('<section><span class="tag">GESTÃO</span><h2>Análises estratégicas</h2><div id="dashboard"></div><details><summary>Gerenciar ofertas</summary><form id="sigaa"><div class="grid">'+field('Semestre para importar do SIGAA','<input name="term" placeholder="2026.2" pattern="20[0-9]{2}[.][12]" required>')+'</div>'+buttons('Importar turmas do SIGAA')+'</form><details><summary>Cadastrar turma</summary><form id="create"><div class="grid">'+
       field('Disciplina',select('course',courses.map((x,i)=>opt(x,i))))+
       field('Semestre','<input name="term" placeholder="2026.2" pattern="20[0-9]{2}[.][12]" required>')+
       field('Identificação da turma','<input name="section" placeholder="Turma A" maxlength="60" required>')+
       field('Docente(s)','<input name="teachers" maxlength="240" required>')+
       field('Modalidade',select('modality',modalities.map(x=>opt(x))))+
       field('Total oficial de elegíveis (opcional)','<input type="number" name="enrolled" min="1" max="500">')+
-      '</div>'+buttons('Abrir coleta')+'</form></details><p>Compartilhe o link da turma com os discentes. Para participantes externos, gere um convite específico. A taxa de participação é exibida quando há um total oficial informado.</p></details><h3>Resultados por turma</h3><div id="offers"></div></section>');
+      '</div>'+buttons('Abrir coleta')+'</form></details><p>Compartilhe o link da turma com os discentes. Para participantes externos, gere um convite específico. A taxa de participação é exibida quando há um total oficial informado.</p></details><h3>Operação das turmas</h3><div id="offers"></div></section>');
     form('sigaa',async data=>{
       const result=await api('import-sigaa',data);
       await manage();
@@ -309,12 +362,39 @@ function client(config){
       state=await api('start');await manage();message('Turma cadastrada.');
     });
     const {offers}=await api('offers',{});
-    const open=offers.filter(o=>o.active).length;
-    const responses=offers.reduce((sum,o)=>sum+o.received,0);
-    const evaluated=offers.filter(o=>o.received>0).length;
-    const eligible=offers.filter(o=>o.enrolled>0);
-    const rate=eligible.length?format(100*eligible.reduce((sum,o)=>sum+o.received,0)/eligible.reduce((sum,o)=>sum+o.enrolled,0))+'%':'—';
-    document.querySelector('#dashboard').innerHTML='<div class="grid cards dashboard"><div><strong>'+open+'</strong><br>Turmas abertas</div><div><strong>'+evaluated+'</strong><br>Turmas com respostas</div><div><strong>'+responses+'</strong><br>Respostas recebidas</div><div><strong>'+rate+'</strong><br>Participação · '+eligible.length+' turma(s) com total oficial</div></div>';
+    const dash=document.querySelector('#dashboard');
+    const terms=[...new Set(offers.map(o=>o.term))].sort().reverse();
+    dash.innerHTML='<h3>Visão geral do PPGCA</h3>'+field('Período','<select id="dash-term">'+opt('Todos os semestres','')+terms.map(t=>opt(t)).join('')+'</select>')+'<div id="dash-summary" aria-live="polite"></div>';
+    const termSelect=document.querySelector('#dash-term');
+    const summary=document.querySelector('#dash-summary');
+    async function refresh(){
+      const term=termSelect.value;
+      summary.textContent='Carregando indicadores…';
+      try{
+        const result=await api('dashboard',{term});
+        if(termSelect.value!==term || !summary.isConnected)return;
+        const scope=offers.filter(o=>!term||o.term===term);
+        const eligible=scope.filter(o=>o.enrolled>0);
+        const rate=eligible.length?format(100*eligible.reduce((sum,o)=>sum+o.received,0)/eligible.reduce((sum,o)=>sum+o.enrolled,0))+'%':'—';
+        const rows=scope.map(o=>{
+          const stats=result.classes[o.id];
+          return '<tr><td>'+esc(name(o))+'</td><td>'+o.received+'</td><td>'+format(stats?.grade??null)+'</td>'+
+            groups.map((_,i)=>'<td>'+format(stats?.axes[i]??null)+'</td>').join('')+
+            '<td><button data-detail="'+esc(o.id)+'">Analisar turma</button></td></tr>';
+        }).join('');
+        summary.innerHTML='<div class="grid cards dashboard"><div><strong>'+scope.filter(o=>o.active).length+'</strong><br>Turmas abertas</div><div><strong>'+scope.filter(o=>o.received>0).length+' / '+scope.length+'</strong><br>Turmas com respostas</div><div><strong>'+result.stats.n+'</strong><br>Respostas recebidas</div><div><strong>'+format(result.stats.grade)+'</strong><br>Nota geral / 10</div><div><strong>'+rate+'</strong><br>Participação · '+eligible.length+' com total oficial</div></div>'+
+          '<p>Cada avaliação enviada pesa igualmente no consolidado. Quem avaliou duas turmas contribui com duas avaliações.</p>'+
+          axes(result.stats)+assessment(result.stats)+voices(result.feedback)+
+          '<h3>Comparação entre turmas</h3>'+(rows?'<div class="table"><table><thead><tr><th>Disciplina e turma</th><th>Respostas</th><th>Nota / 10</th>'+groups.map(g=>'<th>'+esc(g[0])+' / 100</th>').join('')+'<th>Detalhe</th></tr></thead><tbody>'+rows+'</tbody></table></div>':'<p>Nenhuma turma nesse período.</p>');
+        summary.querySelectorAll('[data-detail]').forEach(button=>button.onclick=async()=>{
+          button.disabled=true;
+          try{draw(await api('report',{offer:button.dataset.detail}),true);output().scrollIntoView({block:'start'});}
+          catch(error){message(error.message,true);}finally{button.disabled=false;}
+        });
+      }catch(error){if(termSelect.value===term)summary.textContent=error.message;}
+    }
+    termSelect.onchange=refresh;
+    await refresh();
     const list=document.querySelector('#offers');
     if(!offers.length){list.textContent='Nenhuma turma cadastrada.';return;}
     const importedTerms=[...new Set(offers.filter(o=>o.draft).map(o=>o.term))];
@@ -412,7 +492,7 @@ header .tag{color:#416255}
 .brands img+img{width:65px;height:65px;transform:scale(1.25)}
 nav{gap:.4rem}nav button{font-size:.87rem;padding:.48rem .65rem}
 @media(max-width:610px){.masthead{display:block}.brands{border:0;margin-bottom:.8rem;padding:0}}
-.dashboard{grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:.55rem}.dashboard strong{font-size:1.65rem}
+.dashboard{grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:.55rem}.dashboard strong{font-size:1.65rem}.insight{margin-top:1rem}.insight>div,.quote{background:#f2f6ee;padding:.7rem;border-radius:.45rem}.dashboard meter{width:100%}
 `;
 const html=`<!doctype html><html lang="pt-BR"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Avaliação de Disciplinas | PPGCA · UNEMAT</title><style>${css}</style><header><div class="masthead"><div class="brands"><img src="/marcas/unemat.png" alt="UNEMAT"><img src="/marcas/ppgca.png" alt="PPGCA"></div><div class="masthead-copy"><span class="tag">CÁCERES · PÓS-GRADUAÇÃO</span><h1>Avaliação de disciplinas</h1><p>Mestrado e Doutorado em Ciências Ambientais</p></div></div></header><nav aria-label="Seções"><button data-view="vote">Disciplinas</button><button data-view="manage">Painel de análises</button><button data-view="method">Metodologia</button><button data-view="privacy">Privacidade e LGPD</button><div id="session"></div></nav><main><p>Carregando…</p></main><footer><p><strong>Comissão de avaliação</strong></p><p>Carla Galbiati · Dionei José da Silva · Ernandes Sobreira · Wilkinson Lázaro</p></footer><script src="/app.js"></script></html>`;
 export default {
