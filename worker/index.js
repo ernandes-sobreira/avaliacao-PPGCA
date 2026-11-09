@@ -130,14 +130,6 @@ async function api(request,env,url) {
     ]);
     return result.meta.changes===1 ? json({ok:true}) : fail('A turma está fechada, o convite externo é inválido ou sua conta já respondeu.',409);
   }
-  if(path==='/api/report' && !admin){
-    if(!user?.email.endsWith('@unemat.br'))return fail('Entre com a conta Google institucional para consultar.',401);
-    const code=clean(b.code,40).toLowerCase();
-    if(!/^[a-f0-9]{32}$/.test(code))return fail('Informe um código de consulta válido.',403);
-    const share=await db.prepare('SELECT offer FROM shares WHERE hash=? AND expires>?').bind(await hash(code),Date.now()).first();
-    if(!share)return fail('Código inválido, expirado ou revogado.',403);
-    return report(db,share.offer,false);
-  }
   if(!admin)return fail('Acesso restrito.',403);
   if(path==='/api/offers'){
     const {results}=await db.prepare('SELECT o.*, (SELECT COUNT(*) FROM answers a WHERE a.offer=o.id) AS received FROM offers o ORDER BY term DESC, course').all();
@@ -168,7 +160,7 @@ async function api(request,env,url) {
   }
   const entry=await db.prepare('SELECT * FROM offers WHERE id=?').bind(offer).first();
   if(!entry)return fail('Turma não encontrada.',404);
-  if(path==='/api/report')return report(db,offer,true);
+  if(path==='/api/report')return report(db,offer);
   if(path==='/api/toggle'){
     await db.prepare('UPDATE offers SET active=?,draft=0 WHERE id=?').bind(b.active===true?1:0,offer).run();
     return json({ok:true});
@@ -183,18 +175,6 @@ async function api(request,env,url) {
     await db.prepare('DELETE FROM invites WHERE offer=?').bind(offer).run();
     return json({ok:true});
   }
-  if(path==='/api/share'){
-    if(entry.active)return fail('Encerre a coleta antes de liberar a consulta.');
-    const {n}=await db.prepare('SELECT COUNT(*) AS n FROM answers WHERE offer=?').bind(offer).first();
-    if(n<protection)return fail('São necessárias pelo menos cinco respostas.');
-    const code=token();
-    await db.prepare('INSERT INTO shares VALUES (?,?,?)').bind(await hash(code),offer,Date.now()+7*86400000).run();
-    return json({code});
-  }
-  if(path==='/api/revoke'){
-    await db.prepare('DELETE FROM shares WHERE offer=?').bind(offer).run();
-    return json({ok:true});
-  }
   if(path==='/api/action'){
     const data={action:clean(b.action,1200),owner:clean(b.owner,120),due:clean(b.due,10),status:clean(b.status,30)};
     if(!data.action || !data.owner || !/^\d{4}-\d{2}-\d{2}$/.test(data.due) || !['Proposta','Em andamento','Concluída'].includes(data.status))return fail('Preencha ação, responsável, prazo e situação.');
@@ -203,13 +183,12 @@ async function api(request,env,url) {
   }
   return fail('Rota inválida.',404);
 }
-async function report(db,id,admin){
+async function report(db,id){
   const offer=await db.prepare('SELECT * FROM offers WHERE id=?').bind(id).first();
-  if(!offer || (!admin && offer.active))return fail('Relatório indisponível.',403);
+  if(!offer)return fail('Relatório indisponível.',403);
   const {results}=await db.prepare('SELECT data FROM answers WHERE offer=?').bind(id).all();
-  if(!admin && results.length<protection)return fail('Relatório indisponível.',403);
-  const action=admin ? await db.prepare('SELECT data FROM actions WHERE offer=?').bind(id).first() : null;
-  return json({offer,stats:summarize(results),action:action?JSON.parse(action.data):null,...(admin?{comments:results.flatMap(r=>JSON.parse(r.data).comments.flatMap((value,i)=>value?[{prompt:prompts[i],value}]:[]))}:{})});
+  const action=await db.prepare('SELECT data FROM actions WHERE offer=?').bind(id).first();
+  return json({offer,stats:summarize(results),action:action?JSON.parse(action.data):null,comments:results.flatMap(r=>JSON.parse(r.data).comments.flatMap((value,i)=>value?[{prompt:prompts[i],value}]:[]))});
 }
 function client(config){
   const {courses,groups,prompts,options,modalities,links,firebaseConfig}=config;
@@ -256,35 +235,13 @@ function client(config){
     const label=view==='manage'?'Entrar no painel com Google':'Entrar com Google';
     return state.googleReady?'<button data-login="'+view+'">'+label+'</button>':'<button disabled>'+label+'</button><p class="hint">O login institucional está em configuração.</p>';
   };
-  function catalog(){
-    page('<section><span class="tag">MESTRADO E DOUTORADO</span><h2>Disciplinas do PPGCA</h2><p>As 23 disciplinas da matriz curricular e suas turmas abertas para avaliação.</p>'+field('Buscar disciplina','<input id="course-search" type="search" placeholder="Ex.: Estatística, Pantanal, Saúde">')+'<div id="catalog"></div><p><a href="'+links.matriz+'">Matriz curricular oficial</a></p></section>');
-    const norm=s=>s.normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase();
-    const input=document.querySelector('#course-search');
-    const list=document.querySelector('#catalog');
-    function render(){
-      list.innerHTML=courses.map((title,i)=>({title,i})).filter(({title})=>norm(title).includes(norm(input.value.trim()))).map(({title,i})=>{
-        const type=i<2?'Obrigatória · Mestrado e Doutorado':i<4?'Obrigatória · Doutorado':i===4?'Obrigatória · Mestrado':'Optativa';
-        const open=state.offers.filter(o=>o.course===i);
-        return '<article><h3>'+esc(title)+'</h3><p>'+type+' · 60 horas · 4 créditos</p>'+
-          (open.length?open.map(o=>'<button data-offer="'+esc(o.id)+'">Avaliar '+esc(o.term+' · '+o.section)+'</button>').join(' '):'<small>Sem turma aberta para avaliação</small>')+' <button class="secondary" data-preview="'+i+'">Abrir questionário</button></article>';
-      }).join('')||'<p>Nenhuma disciplina encontrada.</p>';
-      list.querySelectorAll('[data-preview]').forEach(button=>button.onclick=()=>preview(Number(button.dataset.preview)));
-      list.querySelectorAll('[data-offer]').forEach(button=>button.onclick=async()=>{selectedOffer=button.dataset.offer;await show('vote');});
-    }
-    input.oninput=render;render();
-  }
-  const privacyNotice='<section><span class="tag">AVISO DE PRIVACIDADE · V1</span><h2>Privacidade e proteção de dados</h2><h3>Finalidade</h3><p>Verificar a elegibilidade, evitar avaliações duplicadas e orientar melhorias em ementas, ensino e condições de aprendizagem. Indicadores agregados podem subsidiar a autoavaliação e os relatórios do PPGCA.</p><h3>Dados tratados e acesso</h3><p>O login Google verifica o e-mail e o identificador da conta em uma sessão temporária. Participantes externos usam um convite da turma. O registro da avaliação guarda a turma, o vínculo informado, as notas, os comentários opcionais e uma chave derivada da conta para impedir duplicatas. O painel de gestão mostra os comentários. A coordenação consulta indicadores agregados mediante login institucional e código temporário. Evite nomes, matrículas e informações sensíveis nos comentários.</p><h3>Em caso de incidente</h3><p>Comunique a suspeita ao canal de proteção de dados da UNEMAT. O controlador deve conter e avaliar o incidente, preservar registros e adotar medidas de mitigação. Quando houver risco ou dano relevante, o controlador deve comunicar a ANPD e as pessoas afetadas em até três dias úteis, ressalvado prazo específico, informando os dados afetados, os riscos e as medidas de proteção.</p><h3>Seus direitos</h3><p>Use o canal oficial da UNEMAT para solicitar informações, acesso, correção e exercer os demais direitos aplicáveis. Este aviso está em revisão institucional quanto à base legal, ao prazo de retenção, aos operadores e ao descarte. A confirmação de leitura registra ciência do aviso.</p><p><a href="https://unemat.br/site/lgpd">Canal de proteção de dados da UNEMAT</a> · <a href="https://www.gov.br/anpd/pt-br/canais_atendimento/agente-de-tratamento/comunicado-de-incidente-de-seguranca-cis">Orientações da ANPD</a></p>';
+  const privacyNotice='<section><span class="tag">AVISO DE PRIVACIDADE · V1</span><h2>Privacidade e proteção de dados</h2><h3>Finalidade</h3><p>Verificar a elegibilidade, evitar avaliações duplicadas e orientar melhorias em ementas, ensino e condições de aprendizagem. Indicadores agregados podem subsidiar a autoavaliação e os relatórios do PPGCA.</p><h3>Dados tratados e acesso</h3><p>O login Google verifica o e-mail e o identificador da conta em uma sessão temporária. Participantes externos usam um convite da turma. O registro da avaliação guarda a turma, o vínculo informado, as notas, os comentários opcionais e uma chave derivada da conta para impedir duplicatas. O painel de gestão mostra os comentários. Os resultados ficam restritos às contas autorizadas da coordenação e da comissão de avaliação. Evite nomes, matrículas e informações sensíveis nos comentários.</p><h3>Em caso de incidente</h3><p>Comunique a suspeita ao canal de proteção de dados da UNEMAT. O controlador deve conter e avaliar o incidente, preservar registros e adotar medidas de mitigação. Quando houver risco ou dano relevante, o controlador deve comunicar a ANPD e as pessoas afetadas em até três dias úteis, ressalvado prazo específico, informando os dados afetados, os riscos e as medidas de proteção.</p><h3>Seus direitos</h3><p>Use o canal oficial da UNEMAT para solicitar informações, acesso, correção e exercer os demais direitos aplicáveis. Este aviso está em revisão institucional quanto à base legal, ao prazo de retenção, aos operadores e ao descarte. A confirmação de leitura registra ciência do aviso.</p><p><a href="https://unemat.br/site/lgpd">Canal de proteção de dados da UNEMAT</a> · <a href="https://www.gov.br/anpd/pt-br/canais_atendimento/agente-de-tratamento/comunicado-de-incidente-de-seguranca-cis">Orientações da ANPD</a></p>';
   function privacy(){page(privacyNotice+'</section>');}
   const questions=()=>groups.map(([title,items],i)=>'<fieldset><legend>'+title+'</legend>'+items.map((q,j)=>field(q,select('q'+i+'_'+j,[1,2,3,4,5,'N/A'].map(x=>opt(x))))).join('')+'</fieldset>').join('')+
       field('Nota geral de 0 a 10','<input type="number" name="grade" min="0" max="10" step="1" required>')+
       '<details><summary>Sugestões e comentários opcionais</summary>'+prompts.map((p,i)=>field(p,'<textarea name="c'+i+'" maxlength="1200"></textarea>')).join('')+'</details>';
-  function preview(i){
-    page('<section><span class="tag">PRÉVIA DO QUESTIONÁRIO</span><h2>'+esc(courses[i])+'</h2><p>Você pode experimentar as perguntas abaixo. O preenchimento nesta prévia fica na tela. O registro oficial depende da abertura da turma e da entrada institucional.</p>'+questions()+'<p><button id="back-catalog">Voltar às disciplinas</button></p></section>');
-    document.querySelector('#back-catalog').onclick=()=>show('catalog');
-    root.scrollIntoView({block:'start'});
-  }
   function vote(){
-    if(!state.email){page('<section><h2>Entre com seu Google institucional</h2><p>Use sua conta @unemat.br ou uma conta Google verificada com um convite da turma.</p>'+login()+'<p><button id="try-catalog" class="secondary">Abrir questionários</button></p><p><a href="/?privacidade=1">Ler o aviso de privacidade</a></p></section>');document.querySelector('#try-catalog').onclick=()=>show('catalog');return;}
+    if(!state.email){page('<section><h2>Entre com seu Google institucional</h2><p>Use sua conta @unemat.br ou uma conta Google verificada com um convite da turma.</p>'+login()+'<p><a href="/?privacidade=1">Ler o aviso de privacidade</a></p></section>');return;}
     if(!noticeAcknowledged){
       page(privacyNotice+'<form id="acknowledge"><label class="check"><input type="checkbox" name="privacy" required> Li o aviso de privacidade e estou ciente de como meus dados serão usados.</label>'+buttons('Continuar para a avaliação')+'</form></section>');
       form('acknowledge',async data=>{
@@ -300,7 +257,7 @@ function client(config){
     const available=internal?state.offers:state.offers.filter(o=>o.id===linkParams.get('turma') && externalInvite);
     if(!available.length){page('<section><h2>Convite da turma necessário</h2><p>Abra o link de convite externo da turma para responder com sua conta Google.</p></section>');return;}
     page('<section><span class="tag">COLETA DISCENTE</span><h2>Avalie uma disciplina cursada</h2><p>Envie uma avaliação por turma cursada. A conta institucional é verificada no login. O e-mail fica separado das respostas. Evite informações que identifiquem você ou colegas nos comentários.</p><form id="vote"><div class="grid">'+
-      field('Turma',select('offer',available.map(o=>opt(name(o),o.id))))+
+      field('Disciplina e turma',select('offer',available.map(o=>opt(name(o),o.id))))+
       field('Vínculo na época da disciplina',select('level',options.map(x=>opt(x))))+
       '</div><p id="detail"></p><label class="check"><input type="checkbox" name="attended" required> Confirmo que cursei esta turma.</label><p class="hint">1 = discordo totalmente · 2 = discordo · 3 = neutro · 4 = concordo · 5 = concordo totalmente · N/A = não se aplica.</p>'+
       questions()+buttons('Enviar avaliação')+'</form></section>');
@@ -325,28 +282,23 @@ function client(config){
     const {offer,stats,comments,action}=result;
     output().innerHTML='<section><span class="tag">RELATÓRIO POR TURMA</span><h2>'+esc(name(offer))+'</h2><p>'+esc(offer.teachers)+' · '+esc(offer.modality)+'</p><div class="grid cards"><div><strong>'+stats.n+' / '+(offer.enrolled||'—')+'</strong><br>Respostas / elegíveis</div><div><strong>'+(offer.enrolled?format(100*stats.n/offer.enrolled)+'%':'—')+'</strong><br>Participação</div><div><strong>'+format(stats.grade)+'</strong><br>Nota geral média / 10</div></div>'+
       (stats.n<5?'<p>Menos de cinco respostas. Os indicadores quantitativos ficam ocultos.</p>':'')+
-      stats.groups.map(g=>'<details><summary>'+esc(g.title)+' · '+format(g.index)+' / 100</summary><p>'+g.n+' respostas válidas no eixo.</p><div class="table"><table><thead><tr><th>Item</th><th>Média</th><th>Válidas</th><th>N/A</th><th>1 · 2 · 3 · 4 · 5</th></tr></thead><tbody>'+g.items.map(q=>'<tr><td>'+esc(q.q)+'</td><td>'+format(q.mean)+'</td><td>'+q.n+'</td><td>'+q.na+'</td><td>'+(q.counts?.join(' · ')||'—')+'</td></tr>').join('')+'</tbody></table></div></details>').join('')+
+      stats.groups.map(g=>'<details><summary>'+esc(g.title)+' · '+format(g.index)+' / 100</summary>'+(g.index===null?'':'<meter min="0" max="100" value="'+g.index+'" aria-label="'+esc(g.title)+'"></meter>')+'<p>'+g.n+' respostas válidas no eixo.</p><div class="table"><table><thead><tr><th>Item</th><th>Média</th><th>Válidas</th><th>N/A</th><th>1 · 2 · 3 · 4 · 5</th></tr></thead><tbody>'+g.items.map(q=>'<tr><td>'+esc(q.q)+'</td><td>'+format(q.mean)+'</td><td>'+q.n+'</td><td>'+q.na+'</td><td>'+(q.counts?.join(' · ')||'—')+'</td></tr>').join('')+'</tbody></table></div></details>').join('')+
       (admin?'<details><summary>Comentários confidenciais ('+comments.length+')</summary>'+comments.map(c=>'<p><b>'+esc(c.prompt)+'</b><br>'+esc(c.value)+'</p>').join('')+'</details><form id="action"><h3>Acompanhamento da melhoria</h3>'+field('Ação ou devolutiva','<textarea name="action" required maxlength="1200">'+esc(action?.action)+'</textarea>')+field('Responsável','<input name="owner" required maxlength="120" value="'+esc(action?.owner)+'">')+field('Prazo','<input name="due" type="date" required value="'+esc(action?.due)+'">')+field('Situação','<select name="status">'+['Proposta','Em andamento','Concluída'].map(x=>'<option'+(action?.status===x?' selected':'')+'>'+x+'</option>').join('')+'</select>')+buttons('Salvar acompanhamento')+'</form>':'')+'</section>';
     if(admin)form('action',async data=>{await api('action',{...data,offer:offer.id});message('Acompanhamento salvo.');});
-  }
-  function consult(){
-    if(!state.email?.endsWith('@unemat.br')){page('<section><h2>Consulta da coordenação</h2><p>Entre com o Google institucional e tenha em mãos seu código de consulta.</p>'+login()+'</section>');return;}
-    page('<section><span class="tag">COORDENAÇÃO</span><h2>Consultar resultados</h2><p>Use o código temporário recebido para consultar os indicadores da turma após o encerramento. Comentários livres ficam no painel de gestão.</p><form id="consult">'+field('Código de consulta','<input required name="code" minlength="32" maxlength="32" autocomplete="off" spellcheck="false">')+buttons('Consultar')+'</form></section>');
-    form('consult',async data=>{output().replaceChildren();draw(await api('report',data),false);});
   }
   async function manage(){
     if(!state.admin){
       page('<section><h2>Painel de análises</h2><p>Acesso à gestão das turmas, aos indicadores e aos comentários. Use a conta institucional autorizada.</p>'+(state.email?'<p class="hint">A conta '+esc(state.email)+' não tem acesso ao painel.</p>':'')+login('manage')+'</section>');
       return;
     }
-    page('<section><span class="tag">GESTÃO</span><h2>Ofertas e avaliações</h2><form id="sigaa"><div class="grid">'+field('Semestre para importar do SIGAA','<input name="term" placeholder="2026.2" pattern="20[0-9]{2}[.][12]" required>')+'</div>'+buttons('Importar turmas do SIGAA')+'</form><details><summary>Cadastrar turma</summary><form id="create"><div class="grid">'+
+    page('<section><span class="tag">GESTÃO</span><h2>Painel de resultados</h2><div id="dashboard"></div><details><summary>Gerenciar ofertas</summary><form id="sigaa"><div class="grid">'+field('Semestre para importar do SIGAA','<input name="term" placeholder="2026.2" pattern="20[0-9]{2}[.][12]" required>')+'</div>'+buttons('Importar turmas do SIGAA')+'</form><details><summary>Cadastrar turma</summary><form id="create"><div class="grid">'+
       field('Disciplina',select('course',courses.map((x,i)=>opt(x,i))))+
       field('Semestre','<input name="term" placeholder="2026.2" pattern="20[0-9]{2}[.][12]" required>')+
       field('Identificação da turma','<input name="section" placeholder="Turma A" maxlength="60" required>')+
       field('Docente(s)','<input name="teachers" maxlength="240" required>')+
       field('Modalidade',select('modality',modalities.map(x=>opt(x))))+
       field('Total oficial de elegíveis (opcional)','<input type="number" name="enrolled" min="1" max="500">')+
-      '</div>'+buttons('Abrir coleta')+'</form></details><p>Compartilhe o link da turma com os discentes. Para participantes externos, gere um convite específico. A taxa de participação é exibida quando há um total oficial informado.</p><div id="offers"></div></section>');
+      '</div>'+buttons('Abrir coleta')+'</form></details><p>Compartilhe o link da turma com os discentes. Para participantes externos, gere um convite específico. A taxa de participação é exibida quando há um total oficial informado.</p></details><h3>Resultados por turma</h3><div id="offers"></div></section>');
     form('sigaa',async data=>{
       const result=await api('import-sigaa',data);
       await manage();
@@ -357,6 +309,12 @@ function client(config){
       state=await api('start');await manage();message('Turma cadastrada.');
     });
     const {offers}=await api('offers',{});
+    const open=offers.filter(o=>o.active).length;
+    const responses=offers.reduce((sum,o)=>sum+o.received,0);
+    const evaluated=offers.filter(o=>o.received>0).length;
+    const eligible=offers.filter(o=>o.enrolled>0);
+    const rate=eligible.length?format(100*eligible.reduce((sum,o)=>sum+o.received,0)/eligible.reduce((sum,o)=>sum+o.enrolled,0))+'%':'—';
+    document.querySelector('#dashboard').innerHTML='<div class="grid cards dashboard"><div><strong>'+open+'</strong><br>Turmas abertas</div><div><strong>'+evaluated+'</strong><br>Turmas com respostas</div><div><strong>'+responses+'</strong><br>Respostas recebidas</div><div><strong>'+rate+'</strong><br>Participação · '+eligible.length+' turma(s) com total oficial</div></div>';
     const list=document.querySelector('#offers');
     if(!offers.length){list.textContent='Nenhuma turma cadastrada.';return;}
     const importedTerms=[...new Set(offers.filter(o=>o.draft).map(o=>o.term))];
@@ -378,8 +336,8 @@ function client(config){
     }
     list.innerHTML=offers.map(o=>'<article><h3>'+esc(name(o))+'</h3><p>'+(o.active?'Coleta aberta':o.draft?'Importada · aguardando abertura':'Coleta encerrada')+' · '+o.received+(o.enrolled?'/'+o.enrolled:'')+' respostas</p><div class="controls">'+
       '<button data-do="report">Ver respostas</button><button data-do="toggle">'+(o.active?'Encerrar coleta':'Reabrir coleta')+'</button>'+
-      (o.active?'<button data-do="link">Link da turma</button><button data-do="invite">Gerar convite externo</button><button data-do="revoke-invite">Revogar convite externo</button>':'<button data-do="share">Gerar código de consulta</button>')+
-      '<button data-do="revoke">Revogar consultas</button></div></article>').join('');
+      (o.active?'<button data-do="link">Link da turma</button><button data-do="invite">Gerar convite externo</button><button data-do="revoke-invite">Revogar convite externo</button>':'')+
+      '</div></article>').join('');
     [...list.children].forEach((el,i)=>el.querySelectorAll('button').forEach(button=>button.onclick=async()=>{
       button.disabled=true;message('');output().replaceChildren();
       const o=offers[i], op=button.dataset.do;
@@ -387,9 +345,9 @@ function client(config){
         if(op==='link'){output().innerHTML='<section><h3>Link da turma</h3><textarea readonly>'+esc(location.origin+'/?turma='+encodeURIComponent(o.id))+'</textarea></section>';return;}
         const result=await api(op,{offer:o.id,active:!o.active,count:Number(el.querySelector('input')?.value)});
         if(op==='report')draw(result,true);
-        else if(op==='invite'||op==='share'){
-          output().innerHTML='<section><h3>'+(op==='invite'?'Convite externo da turma':'Código de consulta válido por 7 dias')+'</h3><p>Copie antes de sair. O código completo só é mostrado agora.</p><textarea readonly aria-label="Códigos gerados">'+esc(op==='invite'?location.origin+'/?turma='+encodeURIComponent(o.id)+'&convite='+result.code:result.code)+'</textarea></section>';
-        }else {state=await api('start');await manage();message(op==='revoke'?'Consultas revogadas.':op==='revoke-invite'?'Convite externo revogado.':'Situação da coleta atualizada.');}
+        else if(op==='invite'){
+          output().innerHTML='<section><h3>'+'Convite externo da turma'+'</h3><p>Copie antes de sair. O código completo só é mostrado agora.</p><textarea readonly aria-label="Códigos gerados">'+esc(location.origin+'/?turma='+encodeURIComponent(o.id)+'&convite='+result.code)+'</textarea></section>';
+        }else {state=await api('start');await manage();message(op==='revoke-invite'?'Convite externo revogado.':'Situação da coleta atualizada.');}
         document.querySelector('#message').scrollIntoView({block:'nearest'});
       }catch(e){message(e.message,true);}finally{button.disabled=false;}
     }));
@@ -397,7 +355,7 @@ function client(config){
   function method(){
     page('<section><span class="tag">METODOLOGIA · V1</span><h2>Como ler os resultados</h2><p>Os eixos avaliam a experiência na disciplina. A nota geral de 0 a 10 é uma pergunta independente. Os resultados orientam a revisão da oferta e a devolutiva acadêmica.</p><div class="table"><table><thead><tr><th>Evidência</th><th>Uso na autoavaliação</th></tr></thead><tbody><tr><td>Ementa e formação interdisciplinar</td><td>Coerência curricular com Meio Ambiente e Sustentabilidade e as duas linhas do PPGCA. CAPES, itens 1.1.1 e 1.1.2.</td></tr><tr><td>Prática docente, recursos e acessibilidade</td><td>Condições de aprendizagem e infraestrutura percebida. CAPES, itens 1.1.3 e 1.3.</td></tr><tr><td>Participação, comentários e ação registrada</td><td>Evidência para discussão, acompanhamento e devolutiva. CAPES, item 1.2.</td></tr></tbody></table></div><p><strong>Cálculo.</strong> Em cada eixo, faça a média dos itens válidos por respondente, depois a média entre respondentes. Converta para 0–100 com 25 × (média − 1). N/A fica fora do cálculo. A participação divide respostas pelo número de elegíveis cadastrado. Indicadores quantitativos exigem cinco respostas válidas por item ou eixo.</p><p>Esta coleta por disciplina compõe a autoavaliação do programa. A conferência com o PPP integral e a aprovação institucional do instrumento estão pendentes.</p><p><a href="'+links.matriz+'">Matriz curricular UNEMAT</a> · <a href="'+links.normas+'">Regimento e planejamento do PPGCA</a> · <a href="'+links.capes+'">CAPES · Ciências Ambientais 2025–2028</a></p></section>');
   }
-  const views={catalog,vote,consult,manage,method,privacy};
+  const views={vote,manage,method,privacy};
   async function show(key){
     document.querySelectorAll('nav button').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.view===key)));
     try{if(!state)state=await api('start');document.querySelector('#session').innerHTML=state.email?'<form action="/auth/logout" method="post"><span>'+esc(state.email)+'</span> <button>Sair</button></form>':(state.googleReady?login():'');await views[key]();}
@@ -436,7 +394,7 @@ function client(config){
   document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>show(b.dataset.view));
   const query=new URLSearchParams(location.search);
   const access=query.get('acesso');
-  show(query.has('privacidade')?'privacy':query.has('painel')?'manage':(access||linkParams.has('turma'))?'vote':'catalog').then(()=>{
+  show(query.has('privacidade')?'privacy':query.has('painel')?'manage':'vote').then(()=>{
     const errors={dominio:'Use uma conta Google Workspace verificada @unemat.br.',expirado:'A tentativa de login expirou. Entre novamente.',erro:'O Google não concluiu o login. Tente novamente.',configuracao:'O login institucional ainda está em configuração.'};
     if(errors[access])message(errors[access],true);
     if(access)history.replaceState(null,'',location.pathname);
@@ -454,9 +412,9 @@ header .tag{color:#416255}
 .brands img+img{width:65px;height:65px;transform:scale(1.25)}
 nav{gap:.4rem}nav button{font-size:.87rem;padding:.48rem .65rem}
 @media(max-width:610px){.masthead{display:block}.brands{border:0;margin-bottom:.8rem;padding:0}}
-.secondary{background:transparent;color:#185140}
+.dashboard{grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:.55rem}.dashboard strong{font-size:1.65rem}
 `;
-const html=`<!doctype html><html lang="pt-BR"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Avaliação de Disciplinas | PPGCA · UNEMAT</title><style>${css}</style><header><div class="masthead"><div class="brands"><img src="/marcas/unemat.png" alt="UNEMAT"><img src="/marcas/ppgca.png" alt="PPGCA"></div><div class="masthead-copy"><span class="tag">CÁCERES · PÓS-GRADUAÇÃO</span><h1>Avaliação de disciplinas</h1><p>Mestrado e Doutorado em Ciências Ambientais</p></div></div></header><nav aria-label="Seções"><button data-view="catalog">Disciplinas</button><button data-view="vote">Responder</button><button data-view="consult">Consultar com código</button><button data-view="manage">Painel de análises</button><button data-view="method">Metodologia</button><button data-view="privacy">Privacidade e LGPD</button><div id="session"></div></nav><main><p>Carregando…</p></main><footer><p><strong>Comissão de avaliação</strong></p><p>Carla Galbiati · Dionei José da Silva · Ernandes Sobreira · Wilkinson Lázaro</p></footer><script src="/app.js"></script></html>`;
+const html=`<!doctype html><html lang="pt-BR"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Avaliação de Disciplinas | PPGCA · UNEMAT</title><style>${css}</style><header><div class="masthead"><div class="brands"><img src="/marcas/unemat.png" alt="UNEMAT"><img src="/marcas/ppgca.png" alt="PPGCA"></div><div class="masthead-copy"><span class="tag">CÁCERES · PÓS-GRADUAÇÃO</span><h1>Avaliação de disciplinas</h1><p>Mestrado e Doutorado em Ciências Ambientais</p></div></div></header><nav aria-label="Seções"><button data-view="vote">Disciplinas</button><button data-view="manage">Painel de análises</button><button data-view="method">Metodologia</button><button data-view="privacy">Privacidade e LGPD</button><div id="session"></div></nav><main><p>Carregando…</p></main><footer><p><strong>Comissão de avaliação</strong></p><p>Carla Galbiati · Dionei José da Silva · Ernandes Sobreira · Wilkinson Lázaro</p></footer><script src="/app.js"></script></html>`;
 export default {
   async fetch(request,env){
     const url=new URL(request.url);
