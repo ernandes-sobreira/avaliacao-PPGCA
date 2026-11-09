@@ -1,6 +1,6 @@
 # Avaliação de disciplinas do PPGCA · UNEMAT
 
-Aplicação para o mestrado e doutorado em Ciências Ambientais. O catálogo público vem da matriz curricular oficial. O voto exige uma conta Google verificada. Contas @unemat.br respondem por link, e contas externas precisam do convite da turma. A consulta delegada usa autenticação institucional e código temporário.
+Aplicação para o mestrado e doutorado em Ciências Ambientais. O catálogo público vem da matriz curricular oficial. O voto exige uma conta Google verificada. Contas @unemat.br respondem por link, e contas externas precisam do convite da turma. O painel e os resultados exigem uma conta da comissão ou da coordenação autorizada em `ADMIN_EMAILS`.
 
 ## Implantação
 
