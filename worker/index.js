@@ -44,7 +44,7 @@ async function api(request,env,url) {
   const path=url.pathname;
   if(request.method==='GET' && path==='/api/start'){
     const {results}=await db.prepare('SELECT id,course,term,section,teachers,modality FROM offers WHERE active=1 ORDER BY term DESC, course').all();
-    return json({offers:results,admin,email:email||null,googleReady:authReady(env),privacyApproved:env.PRIVACY_APPROVED==='1'});
+    return json({offers:results,admin,email:email||null,googleReady:authReady(env)});
   }
   if(request.method!=='POST')return fail('Método inválido.',405);
   if(request.headers.get('Origin')!==url.origin)return fail('Origem inválida.',403);
@@ -66,7 +66,6 @@ async function api(request,env,url) {
   const offer=clean(b.offer,40);
   if(path==='/api/vote'){
     if(!user)return fail('Entre com a conta Google institucional para responder.',401);
-    if(env.PRIVACY_APPROVED!=='1')return fail('A coleta aguarda a validação institucional do aviso de privacidade.',503);
     if(b.privacy!==true)return fail('Confirme a leitura do aviso de privacidade.');
     const code=clean(b.code,40).toLowerCase();
     if(!/^[a-f0-9]{32}$/.test(code) || !options.includes(b.level) || b.attended!==true ||
@@ -143,6 +142,8 @@ function client(config){
   const {courses,groups,prompts,options,modalities,links,firebaseConfig}=config;
   const root=document.querySelector('main');
   let state;
+  let noticeAcknowledged=false;
+  let selectedOffer;
   const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const opt=(label,value=label)=>'<option value="'+esc(value)+'">'+esc(label)+'</option>';
   const name=o=>courses[o.course]+' · '+o.term+' · '+o.section;
@@ -192,13 +193,12 @@ function client(config){
           (open.length?open.map(o=>'<button data-offer="'+esc(o.id)+'">Avaliar '+esc(o.term+' · '+o.section)+'</button>').join(' '):'<small>Sem turma aberta para avaliação</small>')+' <button class="secondary" data-preview="'+i+'">Abrir questionário</button></article>';
       }).join('')||'<p>Nenhuma disciplina encontrada.</p>';
       list.querySelectorAll('[data-preview]').forEach(button=>button.onclick=()=>preview(Number(button.dataset.preview)));
-      list.querySelectorAll('[data-offer]').forEach(button=>button.onclick=async()=>{await show('vote');const select=document.querySelector('[name=offer]');if(select){select.value=button.dataset.offer;select.dispatchEvent(new Event('change'));}});
+      list.querySelectorAll('[data-offer]').forEach(button=>button.onclick=async()=>{selectedOffer=button.dataset.offer;await show('vote');});
     }
     input.oninput=render;render();
   }
-  function privacy(){
-    page('<section><span class="tag">AVISO DE PRIVACIDADE · V1</span><h2>Privacidade e proteção de dados</h2><h3>Finalidade</h3><p>Verificar a elegibilidade, evitar avaliações duplicadas e orientar melhorias em ementas, ensino e condições de aprendizagem. Indicadores agregados podem subsidiar a autoavaliação e os relatórios do PPGCA.</p><h3>Dados tratados e acesso</h3><p>O login Google verifica o e-mail institucional e o identificador da conta em uma sessão temporária. O registro da avaliação guarda a turma, o vínculo informado, as notas, os comentários opcionais e uma chave derivada da conta para impedir duplicatas. O painel de gestão mostra os comentários. A coordenação consulta indicadores agregados mediante login institucional e código temporário. Evite nomes, matrículas e informações sensíveis nos comentários.</p><h3>Em caso de incidente</h3><p>Comunique a suspeita ao canal de proteção de dados da UNEMAT. O controlador deve conter e avaliar o incidente, preservar registros e adotar medidas de mitigação. Quando houver risco ou dano relevante, o controlador deve comunicar a ANPD e as pessoas afetadas em até três dias úteis, ressalvado prazo específico, informando os dados afetados, os riscos e as medidas de proteção.</p><h3>Seus direitos</h3><p>Use o canal oficial da UNEMAT para solicitar informações, acesso, correção e exercer os demais direitos aplicáveis. Este aviso está em revisão institucional quanto à base legal, ao prazo de retenção, aos operadores e ao descarte. A confirmação de leitura registra ciência do aviso.</p><p><a href="https://unemat.br/site/lgpd">Canal de proteção de dados da UNEMAT</a> · <a href="https://www.gov.br/anpd/pt-br/canais_atendimento/agente-de-tratamento/comunicado-de-incidente-de-seguranca-cis">Orientações da ANPD</a></p></section>');
-  }
+  const privacyNotice='<section><span class="tag">AVISO DE PRIVACIDADE · V1</span><h2>Privacidade e proteção de dados</h2><h3>Finalidade</h3><p>Verificar a elegibilidade, evitar avaliações duplicadas e orientar melhorias em ementas, ensino e condições de aprendizagem. Indicadores agregados podem subsidiar a autoavaliação e os relatórios do PPGCA.</p><h3>Dados tratados e acesso</h3><p>O login Google verifica o e-mail institucional e o identificador da conta em uma sessão temporária. O registro da avaliação guarda a turma, o vínculo informado, as notas, os comentários opcionais e uma chave derivada da conta para impedir duplicatas. O painel de gestão mostra os comentários. A coordenação consulta indicadores agregados mediante login institucional e código temporário. Evite nomes, matrículas e informações sensíveis nos comentários.</p><h3>Em caso de incidente</h3><p>Comunique a suspeita ao canal de proteção de dados da UNEMAT. O controlador deve conter e avaliar o incidente, preservar registros e adotar medidas de mitigação. Quando houver risco ou dano relevante, o controlador deve comunicar a ANPD e as pessoas afetadas em até três dias úteis, ressalvado prazo específico, informando os dados afetados, os riscos e as medidas de proteção.</p><h3>Seus direitos</h3><p>Use o canal oficial da UNEMAT para solicitar informações, acesso, correção e exercer os demais direitos aplicáveis. Este aviso está em revisão institucional quanto à base legal, ao prazo de retenção, aos operadores e ao descarte. A confirmação de leitura registra ciência do aviso.</p><p><a href="https://unemat.br/site/lgpd">Canal de proteção de dados da UNEMAT</a> · <a href="https://www.gov.br/anpd/pt-br/canais_atendimento/agente-de-tratamento/comunicado-de-incidente-de-seguranca-cis">Orientações da ANPD</a></p>';
+  function privacy(){page(privacyNotice+'</section>');}
   const questions=()=>groups.map(([title,items],i)=>'<fieldset><legend>'+title+'</legend>'+items.map((q,j)=>field(q,select('q'+i+'_'+j,[1,2,3,4,5,'N/A'].map(x=>opt(x))))).join('')+'</fieldset>').join('')+
       field('Nota geral de 0 a 10','<input type="number" name="grade" min="0" max="10" step="1" required>')+
       '<details><summary>Sugestões e comentários opcionais</summary>'+prompts.map((p,i)=>field(p,'<textarea name="c'+i+'" maxlength="1200"></textarea>')).join('')+'</details>';
@@ -209,20 +209,35 @@ function client(config){
   }
   function vote(){
     if(!state.email){page('<section><h2>Entre com seu Google institucional</h2><p>Use sua conta @unemat.br para confirmar sua identidade. Tenha em mãos o código individual da turma.</p>'+login()+'<p><button id="try-catalog" class="secondary">Abrir questionários</button></p><p><a href="/?privacidade=1">Ler o aviso de privacidade</a></p></section>');document.querySelector('#try-catalog').onclick=()=>show('catalog');return;}
-    if(!state.privacyApproved){page('<section><h2>Coleta fechada</h2><p>O aviso de privacidade aguarda validação institucional.</p><a href="/?privacidade=1">Ler o aviso</a></section>');return;}
+    if(!noticeAcknowledged){
+      page(privacyNotice+'<form id="acknowledge"><label class="check"><input type="checkbox" name="privacy" required> Li o aviso de privacidade e estou ciente de como meus dados serão usados.</label>'+buttons('Continuar para a avaliação')+'</form></section>');
+      form('acknowledge',async data=>{
+        if(data.privacy!=='on')return;
+        noticeAcknowledged=true;
+        vote();
+        root.scrollIntoView({block:'start'});
+      });
+      return;
+    }
     if(!state.offers.length){page('<section><span class="tag">COLETA DISCENTE</span><h2>Nenhuma turma aberta</h2><p>Quando a comissão abrir uma oferta, ela aparecerá aqui. Use o código individual da turma para responder.</p></section>');return;}
     page('<section><span class="tag">COLETA DISCENTE</span><h2>Avalie uma disciplina cursada</h2><p>Envie uma avaliação por turma com o código individual recebido. A conta institucional é verificada no login. O e-mail fica separado das respostas. Evite informações que identifiquem você ou colegas nos comentários.</p><form id="vote"><div class="grid">'+
       field('Turma',select('offer',state.offers.map(o=>opt(name(o),o.id))))+
       field('Código de participação','<input name="code" required minlength="32" maxlength="32" autocomplete="off" spellcheck="false">')+
       field('Vínculo na época da disciplina',select('level',options.map(x=>opt(x))))+
       '</div><p id="detail"></p><label class="check"><input type="checkbox" name="attended" required> Confirmo que cursei esta turma.</label><p class="hint">1 = discordo totalmente · 2 = discordo · 3 = neutro · 4 = concordo · 5 = concordo totalmente · N/A = não se aplica.</p>'+
-      questions()+'<label class="check"><input type="checkbox" name="privacy" required> Li o <a href="/?privacidade=1" target="_blank" rel="noopener">aviso de privacidade</a> e estou ciente das finalidades.</label>'+buttons('Enviar avaliação')+'</form></section>');
+      questions()+buttons('Enviar avaliação')+'</form></section>');
     document.querySelector('[name=offer]').onchange=e=>{
       const o=state.offers.find(x=>x.id===e.target.value);
       document.querySelector('#detail').textContent=o?o.teachers+' · '+o.modality:'';
     };
+    const offerSelect=document.querySelector('[name=offer]');
+    if(selectedOffer && state.offers.some(o=>o.id===selectedOffer)){
+      offerSelect.value=selectedOffer;
+      offerSelect.dispatchEvent(new Event('change'));
+    }
+    selectedOffer=undefined;
     form('vote',async data=>{
-      await api('vote',{offer:data.offer,code:data.code,privacy:data.privacy==='on',level:data.level,attended:data.attended==='on',grade:Number(data.grade),ratings:groups.map((g,i)=>g[1].map((_,j)=>data['q'+i+'_'+j]==='N/A'?null:Number(data['q'+i+'_'+j]))),comments:prompts.map((_,i)=>data['c'+i])});
+      await api('vote',{offer:data.offer,code:data.code,privacy:noticeAcknowledged,level:data.level,attended:data.attended==='on',grade:Number(data.grade),ratings:groups.map((g,i)=>g[1].map((_,j)=>data['q'+i+'_'+j]==='N/A'?null:Number(data['q'+i+'_'+j]))),comments:prompts.map((_,i)=>data['c'+i])});
       page('<section><span class="tag">RESPOSTA REGISTRADA</span><h2>Obrigado pela avaliação</h2><p>Sua contribuição será considerada na revisão da oferta.</p><button id="again">Avaliar outra turma</button></section>');
       document.querySelector('#again').onclick=vote;
     });
