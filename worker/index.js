@@ -175,7 +175,10 @@ function client(config){
   }
   const output=()=>document.querySelector('#output');
   function page(body){root.innerHTML=body+'<p id="message" role="status"></p><div id="output"></div>';}
-  const login=()=>state.googleReady?'<a class="button" href="/auth/google">Entrar com Google · @unemat.br</a>':'<p class="hint">A entrada institucional aguarda a configuração do Google Workspace.</p>';
+  const login=(view='vote')=>{
+    const label=view==='manage'?'Entrar no painel com Google':'Entrar com Google · @unemat.br';
+    return state.googleReady?'<a class="button" href="/auth/google?view='+view+'">'+label+'</a>':'<button disabled>'+label+'</button><p class="hint">Aguardando a ativação do login no Google Workspace da UNEMAT.</p>';
+  };
   function catalog(){
     page('<section><span class="tag">MESTRADO E DOUTORADO</span><h2>Disciplinas do PPGCA</h2><p>As 23 disciplinas da matriz curricular e suas turmas abertas para avaliação.</p>'+field('Buscar disciplina','<input id="course-search" type="search" placeholder="Ex.: Estatística, Pantanal, Saúde">')+'<div id="catalog"></div><p><a href="'+links.matriz+'">Matriz curricular oficial</a></p></section>');
     const norm=s=>s.normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase();
@@ -239,7 +242,7 @@ function client(config){
   }
   async function manage(){
     if(!state.admin){
-      page('<section><h2>Painel de gestão</h2><p>Entre com a conta Google institucional autorizada.</p>'+login()+'</section>');
+      page('<section><h2>Painel de análises</h2><p>Acesso à gestão das turmas, aos indicadores e aos comentários. Use a conta institucional autorizada.</p>'+(state.email?'<p class="hint">A conta '+esc(state.email)+' não tem acesso ao painel.</p>':'')+login('manage')+'</section>');
       return;
     }
     page('<section><span class="tag">GESTÃO</span><h2>Ofertas e avaliações</h2><details><summary>Cadastrar turma</summary><form id="create"><div class="grid">'+
@@ -295,16 +298,19 @@ function client(config){
 }
 const css=`
 .brands{display:flex;gap:.8rem;align-items:center;margin:0 0 1.3rem}.brands img{height:65px;max-width:45%;object-fit:contain;background:white;border-radius:.45rem;padding:.35rem}.brands img+img{height:78px}#session{margin-left:auto}#session form{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap}:root{font-family:system-ui,sans-serif;color:#19332c;background:#f3f5ee;line-height:1.55}*{box-sizing:border-box}body{margin:0}header{background:#163d32;color:#fff;padding:2.5rem max(1rem,calc((100% - 900px)/2));border-bottom:5px solid #c6a963}h1{font-size:clamp(2rem,6vw,3.6rem);line-height:1.08;margin:.45rem 0}.tag{font-size:.74rem;letter-spacing:.12em;font-weight:800}header p{color:#d4e5db;margin:.65rem 0 0}nav,main,footer{max-width:900px;margin:auto;padding:1rem}nav,.controls{display:flex;gap:.55rem;flex-wrap:wrap}nav button{background:white;color:#163d32}nav button[aria-pressed=true],button,.button{background:#185140;color:white}button,.button{padding:.6rem .85rem;border:1px solid #185140;border-radius:.55rem;cursor:pointer;font:inherit;font-weight:650;text-decoration:none;display:inline-block}button:disabled{opacity:.55;cursor:wait}section,article{background:white;border:1px solid #d4ded3;border-radius:.85rem;padding:clamp(1rem,3vw,2rem);margin-bottom:1rem}article{padding:1rem}h2,h3{line-height:1.2;margin:.45rem 0 .7rem}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(220px,100%),1fr));gap:1rem}label{display:block;font-weight:600;margin:.55rem 0}input,textarea,select{display:block;width:100%;font:inherit;padding:.55rem;border:1px solid #a4b6aa;border-radius:.45rem;background:white;color:#19332c;margin:.3rem 0}textarea{min-height:6rem;resize:vertical}.check input{width:auto;display:inline-block}fieldset,details{border:1px solid #d4ded3;border-radius:.55rem;margin:1rem 0;padding:.75rem}legend,summary{font-weight:750}summary{cursor:pointer}fieldset label{display:grid;grid-template-columns:1fr minmax(95px,125px);gap:.7rem;align-items:center}fieldset label+label{border-top:1px solid #edf0ea}.hint,.cards>div{background:#e8f1e9;padding:.7rem;border-radius:.45rem}.controls input{width:5rem;display:inline-block}.controls label{margin:0}.table{overflow:auto}table{border-collapse:collapse;width:100%}td,th{text-align:left;padding:.5rem;border-bottom:1px solid #d4ded3}a{color:#185140}.error{color:#a12224}#message:not(:empty){padding:1rem;background:white;border-radius:.5rem}footer{font-size:.9rem;color:#3f5e50}footer p{margin:.2rem 0}button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:3px solid #a8761b;outline-offset:2px}
-header{background:linear-gradient(110deg,#f2f6ed,#e2ede4);color:#173b30;border-bottom:3px solid #a99458;padding-top:1.5rem;padding-bottom:1.8rem}
-header h1{font-size:clamp(1.85rem,5vw,3.3rem);letter-spacing:-.045em}
-header p{color:#3c6154}
+header{background:#edf3e9;color:#173b30;border-bottom:1px solid #c8d8ca;padding:0}
+.masthead{max-width:900px;margin:auto;padding:1.4rem 1rem;display:flex;align-items:center;gap:1.5rem}
+header h1{font-size:clamp(1.55rem,3.6vw,2.65rem);letter-spacing:-.035em;margin:.2rem 0}
+header p{color:#3c6154;margin:.2rem 0 0}
 header .tag{color:#416255}
-.brands{gap:1.25rem;margin-bottom:1rem;isolation:isolate}
-.brands img{background:none;border-radius:0;padding:0;height:52px;mix-blend-mode:multiply}
-.brands img+img{height:66px;transform:scale(1.36)}
+.brands{gap:.75rem;margin:0;padding-right:1.5rem;border-right:1px solid #b6c7b8;flex-shrink:0}
+.brands img{background:none;border-radius:0;padding:0;width:120px;height:48px;max-width:none;mix-blend-mode:multiply}
+.brands img+img{width:65px;height:65px;transform:scale(1.25)}
+nav{gap:.4rem}nav button{font-size:.87rem;padding:.48rem .65rem}
+@media(max-width:610px){.masthead{display:block}.brands{border:0;margin-bottom:.8rem;padding:0}}
 .secondary{background:transparent;color:#185140}
 `;
-const html=`<!doctype html><html lang="pt-BR"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Avaliação de Disciplinas | PPGCA · UNEMAT</title><style>${css}</style><header><div class="brands"><img src="/marcas/unemat.png" alt="UNEMAT"><img src="/marcas/ppgca.png" alt="PPGCA"></div><span class="tag">CÁCERES · PÓS-GRADUAÇÃO</span><h1>Avaliação de disciplinas</h1><p>Mestrado e Doutorado em Ciências Ambientais</p></header><nav aria-label="Seções"><button data-view="catalog">Disciplinas</button><button data-view="vote">Responder</button><button data-view="consult">Consultar com código</button><button data-view="manage">Painel de gestão</button><button data-view="method">Metodologia</button><button data-view="privacy">Privacidade e LGPD</button><div id="session"></div></nav><main><p>Carregando…</p></main><footer><p><strong>Comissão de avaliação</strong></p><p>Carla Galbiati · Dionei José da Silva · Ernandes Sobreira · Wilkinson Lázaro</p></footer><script src="/app.js"></script></html>`;
+const html=`<!doctype html><html lang="pt-BR"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Avaliação de Disciplinas | PPGCA · UNEMAT</title><style>${css}</style><header><div class="masthead"><div class="brands"><img src="/marcas/unemat.png" alt="UNEMAT"><img src="/marcas/ppgca.png" alt="PPGCA"></div><div class="masthead-copy"><span class="tag">CÁCERES · PÓS-GRADUAÇÃO</span><h1>Avaliação de disciplinas</h1><p>Mestrado e Doutorado em Ciências Ambientais</p></div></div></header><nav aria-label="Seções"><button data-view="catalog">Disciplinas</button><button data-view="vote">Responder</button><button data-view="consult">Consultar com código</button><button data-view="manage">Painel de análises</button><button data-view="method">Metodologia</button><button data-view="privacy">Privacidade e LGPD</button><div id="session"></div></nav><main><p>Carregando…</p></main><footer><p><strong>Comissão de avaliação</strong></p><p>Carla Galbiati · Dionei José da Silva · Ernandes Sobreira · Wilkinson Lázaro</p></footer><script src="/app.js"></script></html>`;
 export default {
   async fetch(request,env){
     const url=new URL(request.url);
