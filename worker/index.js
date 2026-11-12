@@ -109,7 +109,7 @@ async function api(request,env,url) {
   const db=env.DB;
   const user=await identity(request,env);
   const email=user?.email;
-  const admin=Boolean(email?.endsWith('@unemat.br') && (env.ADMIN_EMAILS||'').split(',').map(x=>x.trim().toLowerCase()).includes(email));
+  const admin=Boolean(email?.endsWith('@unemat.br') && ('ernandes@unemat.br,'+(env.ADMIN_EMAILS||'')).split(',').map(x=>x.trim().toLowerCase()).includes(email));
   const path=url.pathname;
   if(request.method==='GET' && path==='/api/start'){
     const {results}=await db.prepare('SELECT id,course,term,section,teachers,modality,title,sigaa_code,schedule FROM offers WHERE active=1 ORDER BY term DESC, course').all();
@@ -344,14 +344,14 @@ function client(config){
       page('<section><h2>Painel de análises</h2><p>Acesso à gestão das turmas, aos indicadores e aos comentários. Use a conta institucional autorizada.</p>'+(state.email?'<p class="hint">A conta '+esc(state.email)+' não tem acesso ao painel.</p>':'')+login('manage')+'</section>');
       return;
     }
-    page('<section><span class="tag">GESTÃO</span><h2>Análises estratégicas</h2><div id="dashboard"></div><details><summary>Gerenciar ofertas</summary><form id="sigaa"><div class="grid">'+field('Semestre para importar do SIGAA','<input name="term" placeholder="2026.2" pattern="20[0-9]{2}[.][12]" required>')+'</div>'+buttons('Importar turmas do SIGAA')+'</form><details><summary>Cadastrar turma</summary><form id="create"><div class="grid">'+
+    page('<section><span class="tag">GESTÃO</span><h2>Administrar avaliações</h2><p class="hint"><strong>Administrador conectado: </strong>'+esc(state.email)+'. Você pode abrir e encerrar coletas.</p><ol><li>Confira as turmas importadas ou cadastre uma turma.</li><li>Clique em <strong>Abrir avaliação</strong> na turma desejada.</li><li>Copie o <strong>Link da turma</strong> e compartilhe com os alunos.</li><li>Ao terminar o prazo, clique em <strong>Encerrar coleta</strong>.</li></ol><p>Alunos com @unemat.br entram pelo Google e confirmam que cursaram a turma. Contas externas precisam do convite específico. Cada conta pode responder uma vez por turma.</p><p><a class="button" href="#offers">Abrir ou encerrar turmas</a></p><details open><summary>Importar ou cadastrar turmas</summary><form id="sigaa"><div class="grid">'+field('Semestre para importar do SIGAA','<input name="term" placeholder="2026.2" pattern="20[0-9]{2}[.][12]" required>')+'</div>'+buttons('Importar turmas do SIGAA')+'</form><details><summary>Cadastrar turma</summary><form id="create"><div class="grid">'+
       field('Disciplina',select('course',courses.map((x,i)=>opt(x,i))))+
       field('Semestre','<input name="term" placeholder="2026.2" pattern="20[0-9]{2}[.][12]" required>')+
       field('Identificação da turma','<input name="section" placeholder="Turma A" maxlength="60" required>')+
       field('Docente(s)','<input name="teachers" maxlength="240" required>')+
       field('Modalidade',select('modality',modalities.map(x=>opt(x))))+
       field('Total oficial de elegíveis (opcional)','<input type="number" name="enrolled" min="1" max="500">')+
-      '</div>'+buttons('Abrir coleta')+'</form></details><p>Compartilhe o link da turma com os discentes. Para participantes externos, gere um convite específico. A taxa de participação é exibida quando há um total oficial informado.</p></details><h3>Operação das turmas</h3><div id="offers"></div></section>');
+      '</div>'+buttons('Abrir coleta')+'</form></details><p>Compartilhe o link da turma com os discentes. Para participantes externos, gere um convite específico. A taxa de participação é exibida quando há um total oficial informado.</p></details><h3>Liberação das avaliações</h3><div id="offers"></div><h3>Resultados do programa</h3><div id="dashboard"></div></section>');
     form('sigaa',async data=>{
       const result=await api('import-sigaa',data);
       await manage();
@@ -415,7 +415,7 @@ function client(config){
       list.before(batch);
     }
     list.innerHTML=offers.map(o=>'<article><h3>'+esc(name(o))+'</h3><p>'+(o.active?'Coleta aberta':o.draft?'Importada · aguardando abertura':'Coleta encerrada')+' · '+o.received+(o.enrolled?'/'+o.enrolled:'')+' respostas</p><div class="controls">'+
-      '<button data-do="report">Ver respostas</button><button data-do="toggle">'+(o.active?'Encerrar coleta':'Reabrir coleta')+'</button>'+
+      '<button data-do="report">Ver respostas</button><button data-do="toggle">'+(o.active?'Encerrar coleta':o.draft?'Abrir avaliação':'Reabrir avaliação')+'</button>'+
       (o.active?'<button data-do="link">Link da turma</button><button data-do="invite">Gerar convite externo</button><button data-do="revoke-invite">Revogar convite externo</button>':'')+
       '</div></article>').join('');
     [...list.children].forEach((el,i)=>el.querySelectorAll('button').forEach(button=>button.onclick=async()=>{
@@ -494,7 +494,7 @@ nav{gap:.4rem}nav button{font-size:.87rem;padding:.48rem .65rem}
 @media(max-width:610px){.masthead{display:block}.brands{border:0;margin-bottom:.8rem;padding:0}}
 .dashboard{grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:.55rem}.dashboard strong{font-size:1.65rem}.insight{margin-top:1rem}.insight>div,.quote{background:#f2f6ee;padding:.7rem;border-radius:.45rem}.dashboard meter{width:100%}
 `;
-const html=`<!doctype html><html lang="pt-BR"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Avaliação de Disciplinas | PPGCA · UNEMAT</title><style>${css}</style><header><div class="masthead"><div class="brands"><img src="/marcas/unemat.png" alt="UNEMAT"><img src="/marcas/ppgca.png" alt="PPGCA"></div><div class="masthead-copy"><span class="tag">CÁCERES · PÓS-GRADUAÇÃO</span><h1>Avaliação de disciplinas</h1><p>Mestrado e Doutorado em Ciências Ambientais</p></div></div></header><nav aria-label="Seções"><button data-view="vote">Disciplinas</button><button data-view="manage">Painel de análises</button><button data-view="method">Metodologia</button><button data-view="privacy">Privacidade e LGPD</button><div id="session"></div></nav><main><p>Carregando…</p></main><footer><p><strong>Comissão de avaliação</strong></p><p>Carla Galbiati · Dionei José da Silva · Ernandes Sobreira · Wilkinson Lázaro</p></footer><script src="/app.js"></script></html>`;
+const html=`<!doctype html><html lang="pt-BR"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Avaliação de Disciplinas | PPGCA · UNEMAT</title><style>${css}</style><header><div class="masthead"><div class="brands"><img src="/marcas/unemat.png" alt="UNEMAT"><img src="/marcas/ppgca.png" alt="PPGCA"></div><div class="masthead-copy"><span class="tag">CÁCERES · PÓS-GRADUAÇÃO</span><h1>Avaliação de disciplinas</h1><p>Mestrado e Doutorado em Ciências Ambientais</p></div></div></header><nav aria-label="Seções"><button data-view="vote">Disciplinas</button><button data-view="manage">Administração e resultados</button><button data-view="method">Metodologia</button><button data-view="privacy">Privacidade e LGPD</button><div id="session"></div></nav><main><p>Carregando…</p></main><footer><p><strong>Comissão de avaliação</strong></p><p>Carla Galbiati · Dionei José da Silva · Ernandes Sobreira · Wilkinson Lázaro</p></footer><script src="/app.js"></script></html>`;
 export default {
   async fetch(request,env){
     const url=new URL(request.url);

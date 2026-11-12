@@ -2,6 +2,14 @@
 
 Aplicação para o mestrado e doutorado em Ciências Ambientais. O catálogo público vem da matriz curricular oficial. O voto exige uma conta Google verificada. Contas @unemat.br respondem por link, e contas externas precisam do convite da turma. O painel e os resultados exigem uma conta da comissão ou da coordenação autorizada em `ADMIN_EMAILS`.
 
+## Acesso e administração
+
+- Entrada pelo GitHub: https://ernandes-sobreira.github.io/avaliacao-PPGCA/ (encaminha para o servidor atual; não é uma migração do banco).
+- Sistema: https://avaliacao-disciplinas-ppgca-unemat.ernandes-sobreira.chatgpt.site/
+- Administrador responsável: `ernandes@unemat.br`. Outros gestores continuam definidos em `ADMIN_EMAILS`.
+- Entre em **Administração e resultados**, confira as turmas e clique em **Abrir avaliação**. Compartilhe o link da turma com os alunos. Encerre a coleta ao terminar o prazo.
+- O acesso institucional exige Google verificado. Contas externas precisam do convite da turma. O sistema limita uma resposta por conta/turma; não verifica matrícula automaticamente.
+
 ## Implantação
 
 A aplicação utiliza Cloudflare Worker e D1. A hospedagem atual usa o Site existente. GitHub armazena o código e as marcas institucionais. As respostas ficam no banco do servidor.

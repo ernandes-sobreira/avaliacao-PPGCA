@@ -1,0 +1,8 @@
+<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex"><title>Avaliação de disciplinas | PPGCA · UNEMAT</title><style>body{margin:0;background:#f3f5ee;color:#19332c;font:18px/1.6 system-ui,sans-serif}main{max-width:660px;margin:12vh auto;padding:32px;background:white;border:1px solid #d4ded3;border-radius:16px}h1{line-height:1.2}a{display:inline-block;background:#185140;color:white;padding:12px 20px;border-radius:8px;text-decoration:none}small{display:block;margin-top:24px}img{max-width:140px;height:65px;object-fit:contain;margin-right:20px}</style></head><body><main><img src="assets/unemat.png" alt="UNEMAT"><img src="assets/ppgca-02.png" alt="PPGCA"><h1>Avaliação de disciplinas</h1><p>Abrindo o sistema do PPGCA. Se a abertura não ocorrer, use o botão abaixo.</p><a id="enter" href="https://avaliacao-disciplinas-ppgca-unemat.ernandes-sobreira.chatgpt.site/">Entrar no sistema</a><small>Esta página é o acesso público pelo GitHub. Login, respostas e administração funcionam no servidor do sistema.</small></main><script>
+const destination=new URL('https://avaliacao-disciplinas-ppgca-unemat.ernandes-sobreira.chatgpt.site/');
+destination.search=location.search;
+destination.hash=location.hash;
+document.querySelector('#enter').href=destination.href;
+location.replace(destination.href);
+</script></body></html>
