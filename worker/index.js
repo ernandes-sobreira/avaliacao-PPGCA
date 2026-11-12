@@ -230,6 +230,7 @@ function client(config){
   const {courses,groups,prompts,options,modalities,links,firebaseConfig}=config;
   const root=document.querySelector('main');
   let state;
+  let viewRequest=0;
   let noticeAcknowledged=false;
   const linkParams=new URLSearchParams(location.search);
   let selectedOffer=linkParams.get('turma');
@@ -363,8 +364,9 @@ function client(config){
       await api('create',{...data,course:Number(data.course),enrolled:Number(data.enrolled)});
       state=await api('start');await manage();message('Turma cadastrada.');
     });
-    const {offers}=await api('offers',{});
     const dash=document.querySelector('#dashboard');
+    const {offers}=await api('offers',{});
+    if(!dash?.isConnected)return;
     const terms=[...new Set(offers.map(o=>o.term))].sort().reverse();
     dash.innerHTML='<h3>Visão geral do PPGCA</h3>'+field('Período','<select id="dash-term">'+opt('Todos os semestres','')+terms.map(t=>opt(t)).join('')+'</select>')+'<div id="dash-summary" aria-live="polite"></div>';
     const termSelect=document.querySelector('#dash-term');
@@ -397,7 +399,9 @@ function client(config){
     }
     termSelect.onchange=refresh;
     await refresh();
+    if(!dash.isConnected)return;
     const list=document.querySelector('#offers');
+    if(!list)return;
     if(!offers.length){list.textContent='Nenhuma turma cadastrada.';return;}
     const importedTerms=[...new Set(offers.filter(o=>o.draft).map(o=>o.term))];
     if(importedTerms.length){
@@ -439,9 +443,10 @@ function client(config){
   }
   const views={vote,manage,method,privacy};
   async function show(key){
+    const requestId=++viewRequest;
     document.querySelectorAll('nav button').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.view===key)));
-    try{if(!state)state=await api('start');document.querySelector('#session').innerHTML=state.email?'<form action="/auth/logout" method="post"><span>'+esc(state.email)+'</span> <button>Sair</button></form>':(state.googleReady?login():'');await views[key]();}
-    catch(e){page('<section><h2>Serviço indisponível</h2><p>Tente novamente em instantes.</p></section>');message(e.message,true);}
+    try{if(!state)state=await api('start');if(requestId!==viewRequest)return;document.querySelector('#session').innerHTML=state.email?'<form action="/auth/logout" method="post"><span>'+esc(state.email)+'</span> <button>Sair</button></form>':(state.googleReady?login():'');await views[key]();}
+    catch(e){if(requestId!==viewRequest)return;page('<section><h2>Serviço indisponível</h2><p>Tente novamente em instantes.</p></section>');message(e.message,true);}
   }
   document.addEventListener('click',async event=>{
     const button=event.target.closest('[data-login]');
