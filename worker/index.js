@@ -112,7 +112,7 @@ async function api(request,env,url) {
   const admin=Boolean(email?.endsWith('@unemat.br') && ('ernandes@unemat.br,'+(env.ADMIN_EMAILS||'')).split(',').map(x=>x.trim().toLowerCase()).includes(email));
   const path=url.pathname;
   if(request.method==='GET' && path==='/api/start'){
-    const {results}=await db.prepare('SELECT id,course,term,section,teachers,modality,title,sigaa_code,schedule FROM offers WHERE active=1 ORDER BY term DESC, course').all();
+    const {results}=await db.prepare('SELECT id,course,term,section,teachers,modality,title,sigaa_code,schedule,roster_required FROM offers WHERE active=1 AND (roster_required=0 OR EXISTS (SELECT 1 FROM roster r WHERE r.offer=offers.id AND r.email=?)) ORDER BY term DESC, course').bind(email||'').all();
     return json({offers:results,admin,email:email||null,googleReady:authReady(env)});
   }
   if(request.method!=='POST')return fail('Método inválido.',405);
@@ -126,7 +126,7 @@ async function api(request,env,url) {
     const part=await reader.read();
     if(part.done)break;
     bytes+=part.value.byteLength;
-    if(bytes>16000){await reader.cancel();return fail('Envio muito longo.',413);}
+    if(bytes>(path==='/api/import-roster'?100000:16000)){await reader.cancel();return fail('Envio muito longo.',413);}
     raw+=decoder.decode(part.value,{stream:true});
   }
   let b;
@@ -145,12 +145,12 @@ async function api(request,env,url) {
     const inviteHash=await hash(code);
     const ticket='link:'+key;
     const data=JSON.stringify({level:b.level,grade:b.grade,ratings:b.ratings,noticeVersion:1,comments:prompts.map((_,i)=>clean(b.comments?.[i],1200))});
-    const access='o.id=? AND o.active=1 AND (?=1 OR EXISTS (SELECT 1 FROM invites i WHERE i.offer=o.id AND i.hash=?))';
+    const access='o.id=? AND o.active=1 AND ((o.roster_required=0 AND (?=1 OR EXISTS (SELECT 1 FROM invites i WHERE i.offer=o.id AND i.hash=?))) OR EXISTS (SELECT 1 FROM roster r WHERE r.offer=o.id AND r.email=?))';
     const [,result]=await db.batch([
-      db.prepare('INSERT OR IGNORE INTO tickets(hash,offer) SELECT ?,o.id FROM offers o WHERE '+access).bind(ticket,offer,internal?1:0,inviteHash),
-      db.prepare('INSERT OR IGNORE INTO answers(ticket,offer,data,voter_key) SELECT ?,o.id,?,? FROM offers o WHERE '+access).bind(ticket,data,key,offer,internal?1:0,inviteHash)
+      db.prepare('INSERT OR IGNORE INTO tickets(hash,offer) SELECT ?,o.id FROM offers o WHERE '+access).bind(ticket,offer,internal?1:0,inviteHash,email),
+      db.prepare('INSERT OR IGNORE INTO answers(ticket,offer,data,voter_key) SELECT ?,o.id,?,? FROM offers o WHERE '+access).bind(ticket,data,key,offer,internal?1:0,inviteHash,email)
     ]);
-    return result.meta.changes===1 ? json({ok:true}) : fail('A turma está fechada, o convite externo é inválido ou sua conta já respondeu.',409);
+    return result.meta.changes===1 ? json({ok:true}) : fail('A turma está fechada, sua conta não está autorizada para esta turma ou já respondeu.',409);
   }
   if(!admin)return fail('Acesso restrito.',403);
   if(path==='/api/offers'){
@@ -196,6 +196,21 @@ async function api(request,env,url) {
   }
   const entry=await db.prepare('SELECT * FROM offers WHERE id=?').bind(offer).first();
   if(!entry)return fail('Turma não encontrada.',404);
+  if(path==='/api/import-roster'){
+    if(!Array.isArray(b.students)||!b.students.length||b.students.length>500)return fail('Envie de 1 a 500 alunos.');
+    const unique=new Map();
+    for(const row of b.students){
+      const name=clean(row?.name,121),email=clean(row?.email,255).toLowerCase();
+      if(!name||name.length>120||email.length>254||!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email))return fail('Há nomes ou e-mails inválidos. Nenhum aluno foi importado.');
+      unique.set(email,{name,email});
+    }
+    const before=await db.prepare('SELECT COUNT(*) AS total FROM roster WHERE offer=?').bind(offer).first();
+    await db.batch([...unique.values()].map(row=>db.prepare('INSERT INTO roster(offer,email,name) VALUES (?,?,?) ON CONFLICT(offer,email) DO UPDATE SET name=excluded.name').bind(offer,row.email,row.name)).concat([
+      db.prepare('UPDATE offers SET roster_required=1,enrolled=(SELECT COUNT(*) FROM roster WHERE offer=?) WHERE id=?').bind(offer,offer)
+    ]));
+    const after=await db.prepare('SELECT COUNT(*) AS total FROM roster WHERE offer=?').bind(offer).first();
+    return json({ok:true,added:after.total-before.total,total:after.total});
+  }
   if(path==='/api/report')return report(db,offer);
   if(path==='/api/toggle'){
     await db.prepare('UPDATE offers SET active=?,draft=0 WHERE id=?').bind(b.active===true?1:0,offer).run();
@@ -226,8 +241,76 @@ async function report(db,id){
   const action=await db.prepare('SELECT data FROM actions WHERE offer=?').bind(id).first();
   return json({offer,stats:summarize(results),feedback:feedback(results),action:action?JSON.parse(action.data):null,comments:results.flatMap(r=>JSON.parse(r.data).comments.flatMap((value,i)=>value?[{prompt:prompts[i],value}]:[]))});
 }
+function parseRosterCsv(text,offer){
+  if(typeof text!=='string'||text.length>100000)throw new Error('O arquivo deve ter até 100 KB.');
+  text=text.replace(/^\uFEFF/,'');
+  const first=text.split(/\r?\n/)[0];
+  const delimiter=first.includes(';')?';':',';
+  const rows=[];let row=[],cell='',quoted=false;
+  for(let i=0;i<text.length;i++){
+    const c=text[i];
+    if(c==='"'){
+      if(quoted&&text[i+1]==='"'){cell+='"';i++;}
+      else if(!cell||quoted)quoted=!quoted;
+      else throw new Error('Aspas inválidas no CSV.');
+    }else if(!quoted&&(c===delimiter||c==='\n'||c==='\r')){
+      row.push(cell.trim());cell='';
+      if(c!==delimiter){if(row.some(x=>x))rows.push(row);row=[];if(c==='\r'&&text[i+1]==='\n')i++;}
+    }else cell+=c;
+  }
+  if(quoted)throw new Error('Há aspas não fechadas no CSV.');
+  row.push(cell.trim());if(row.some(x=>x))rows.push(row);
+  const head=(rows.shift()||[]).map(x=>x.normalize('NFD').replace(/\p{M}/gu,'').toLowerCase().replace(/[ _-]/g,''));
+  const ni=head.indexOf('nome'),ei=head.findIndex(x=>x==='email');
+  if(ni<0||ei<0)throw new Error('O cabeçalho deve conter nome e email.');
+  if(rows.length>500)throw new Error('Importe até 500 linhas por arquivo.');
+  const errors=[],students=[],seen=new Set();let duplicates=0;
+  rows.forEach((values,i)=>{
+    const name=values[ni]||'',email=(values[ei]||'').toLowerCase();
+    const si=head.indexOf('semestre'),ti=head.indexOf('turma');
+    if(!name||name.length>120||email.length>254||!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){errors.push('Linha '+(i+2)+': confira nome e e-mail.');return;}
+    if((si>=0&&values[si]&&values[si]!==offer.term)||(ti>=0&&values[ti]&&values[ti]!==offer.section)){errors.push('Linha '+(i+2)+': semestre ou turma diferente da selecionada.');return;}
+    if(seen.has(email)){duplicates++;return;}seen.add(email);students.push({name,email});
+  });
+  if(!students.length&&!errors.length)errors.push('Nenhum aluno encontrado.');
+  return {students,duplicates,errors};
+}
 function client(config){
   const {courses,groups,prompts,options,modalities,links,firebaseConfig}=config;
+  const parseRosterCsv=(function(text,offer){
+  if(typeof text!=='string'||text.length>100000)throw new Error('O arquivo deve ter até 100 KB.');
+  text=text.replace(/^\uFEFF/,'');
+  const first=text.split(/\r?\n/)[0];
+  const delimiter=first.includes(';')?';':',';
+  const rows=[];let row=[],cell='',quoted=false;
+  for(let i=0;i<text.length;i++){
+    const c=text[i];
+    if(c==='"'){
+      if(quoted&&text[i+1]==='"'){cell+='"';i++;}
+      else if(!cell||quoted)quoted=!quoted;
+      else throw new Error('Aspas inválidas no CSV.');
+    }else if(!quoted&&(c===delimiter||c==='\n'||c==='\r')){
+      row.push(cell.trim());cell='';
+      if(c!==delimiter){if(row.some(x=>x))rows.push(row);row=[];if(c==='\r'&&text[i+1]==='\n')i++;}
+    }else cell+=c;
+  }
+  if(quoted)throw new Error('Há aspas não fechadas no CSV.');
+  row.push(cell.trim());if(row.some(x=>x))rows.push(row);
+  const head=(rows.shift()||[]).map(x=>x.normalize('NFD').replace(/\p{M}/gu,'').toLowerCase().replace(/[ _-]/g,''));
+  const ni=head.indexOf('nome'),ei=head.findIndex(x=>x==='email');
+  if(ni<0||ei<0)throw new Error('O cabeçalho deve conter nome e email.');
+  if(rows.length>500)throw new Error('Importe até 500 linhas por arquivo.');
+  const errors=[],students=[],seen=new Set();let duplicates=0;
+  rows.forEach((values,i)=>{
+    const name=values[ni]||'',email=(values[ei]||'').toLowerCase();
+    const si=head.indexOf('semestre'),ti=head.indexOf('turma');
+    if(!name||name.length>120||email.length>254||!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){errors.push('Linha '+(i+2)+': confira nome e e-mail.');return;}
+    if((si>=0&&values[si]&&values[si]!==offer.term)||(ti>=0&&values[ti]&&values[ti]!==offer.section)){errors.push('Linha '+(i+2)+': semestre ou turma diferente da selecionada.');return;}
+    if(seen.has(email)){duplicates++;return;}seen.add(email);students.push({name,email});
+  });
+  if(!students.length&&!errors.length)errors.push('Nenhum aluno encontrado.');
+  return {students,duplicates,errors};
+});
   const root=document.querySelector('main');
   let state;
   let viewRequest=0;
@@ -293,7 +376,7 @@ function client(config){
     }
     if(!state.offers.length){page('<section><span class="tag">COLETA DISCENTE</span><h2>Nenhuma turma aberta</h2><p>Quando a comissão abrir uma oferta, ela aparecerá aqui.</p></section>');return;}
     const internal=state.email.endsWith('@unemat.br');
-    const available=internal?state.offers:state.offers.filter(o=>o.id===linkParams.get('turma') && externalInvite);
+    const available=state.offers.filter(o=>internal||o.roster_required===1||(o.id===linkParams.get('turma')&&externalInvite));
     if(!available.length){page('<section><h2>Convite da turma necessário</h2><p>Abra o link de convite externo da turma para responder com sua conta Google.</p></section>');return;}
     page('<section><span class="tag">COLETA DISCENTE</span><h2>Avalie uma disciplina cursada</h2><p>Envie uma avaliação por turma cursada. A conta institucional é verificada no login. O e-mail fica separado das respostas. Evite informações que identifiquem você ou colegas nos comentários.</p><form id="vote"><div class="grid">'+
       field('Disciplina e turma',select('offer',available.map(o=>opt(name(o),o.id))))+
@@ -342,12 +425,39 @@ function client(config){
       (admin?'<form id="action"><h3>Acompanhamento da melhoria</h3>'+field('Ação ou devolutiva','<textarea name="action" required maxlength="1200">'+esc(action?.action)+'</textarea>')+field('Responsável','<input name="owner" required maxlength="120" value="'+esc(action?.owner)+'">')+field('Prazo','<input name="due" type="date" required value="'+esc(action?.due)+'">')+field('Situação','<select name="status">'+['Proposta','Em andamento','Concluída'].map(x=>'<option'+(action?.status===x?' selected':'')+'>'+x+'</option>').join('')+'</select>')+buttons('Salvar acompanhamento')+'</form>':'')+'</section>';
     if(admin)form('action',async data=>{await api('action',{...data,offer:offer.id});message('Acompanhamento salvo.');});
   }
+  function importStudents(offer){
+    output().innerHTML='<section class="course-report '+courseClass(offer)+'"><span class="tag">IMPORTAR ALUNOS</span><h2>'+esc(name(offer))+'</h2><p>Envie um CSV com as colunas <strong>nome</strong> e <strong>email</strong>. Semestre e turma são opcionais e devem coincidir com esta oferta. No Excel, use Salvar como → CSV UTF-8.</p><p>A confirmação adiciona os alunos à lista existente e restringe a avaliação aos e-mails cadastrados. Não envia mensagens nem cria contas Google. Os nomes ficam na gestão da lista, separados das respostas.</p><button id="roster-model">Baixar modelo CSV</button><label>Arquivo de alunos<input id="roster-file" type="file" accept=".csv,text/csv"></label><div id="roster-preview" aria-live="polite"></div></section>';
+    const panel=output().querySelector('section');
+    panel.querySelector('#roster-model').onclick=()=>{
+      const blob=new Blob(['\uFEFFnome;email;semestre;turma\r\nAluno Exemplo;aluno.exemplo@unemat.br;'+offer.term+';"'+offer.section.replaceAll('"','""')+'"\r\n'],{type:'text/csv;charset=utf-8'});
+      const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='modelo-alunos.csv';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+    };
+    panel.querySelector('#roster-file').onchange=async event=>{
+      const file=event.target.files[0],preview=panel.querySelector('#roster-preview');
+      preview.replaceChildren();if(!file)return;
+      try{
+        if(file.size>100000)throw new Error('O arquivo deve ter até 100 KB.');
+        const parsed=parseRosterCsv(await file.text(),offer);
+        if(!panel.isConnected)return;
+        preview.innerHTML='<p><strong>'+parsed.students.length+' alunos válidos</strong> · '+parsed.duplicates+' duplicados no arquivo.</p>'+(parsed.errors.length?'<p class="error">Corrija o arquivo antes de confirmar.</p><ul>'+parsed.errors.map(x=>'<li>'+esc(x)+'</li>').join('')+'</ul>':'')+'<div class="table"><table><thead><tr><th>Nome</th><th>E-mail</th></tr></thead><tbody>'+parsed.students.map(x=>'<tr><td>'+esc(x.name)+'</td><td>'+esc(x.email)+'</td></tr>').join('')+'</tbody></table></div><button id="roster-confirm" '+(parsed.errors.length?'disabled':'')+'>Confirmar importação e restringir acesso</button>';
+        preview.querySelector('#roster-confirm').onclick=async e=>{
+          e.target.disabled=true;
+          try{
+            const result=await api('import-roster',{offer:offer.id,students:parsed.students});
+            if(panel.isConnected)preview.innerHTML='<p><strong>Importação concluída.</strong> '+result.added+' novos alunos; '+result.total+' cadastrados nesta turma. A coleta '+(offer.active?'permanece aberta':'continua fechada até você abri-la')+'.</p>';
+            state=await api('start');
+          }catch(error){message(error.message,true);e.target.disabled=false;}
+        };
+      }catch(error){if(panel.isConnected)preview.textContent=error.message;}
+    };
+    panel.scrollIntoView({block:'start'});
+  }
   async function manage(){
     if(!state.admin){
       page('<section><h2>Painel de análises</h2><p>Acesso à gestão das turmas, aos indicadores e aos comentários. Use a conta institucional autorizada.</p>'+(state.email?'<p class="hint">A conta '+esc(state.email)+' não tem acesso ao painel.</p>':'')+login('manage')+'</section>');
       return;
     }
-    page('<section><span class="tag">GESTÃO</span><h2>Administrar avaliações</h2><p class="hint"><strong>Administrador conectado: </strong>'+esc(state.email)+'. Você pode abrir e encerrar coletas.</p><ol><li>Confira as turmas importadas ou cadastre uma turma.</li><li>Clique em <strong>Abrir avaliação</strong> na turma desejada.</li><li>Copie o <strong>Link da turma</strong> e compartilhe com os alunos.</li><li>Ao terminar o prazo, clique em <strong>Encerrar coleta</strong>.</li></ol><p>Alunos com @unemat.br entram pelo Google e confirmam que cursaram a turma. Contas externas precisam do convite específico. Cada conta pode responder uma vez por turma.</p><p><a class="button" href="#offers">Abrir ou encerrar turmas</a></p><details open><summary>Importar ou cadastrar turmas</summary><form id="sigaa"><div class="grid">'+field('Semestre para importar do SIGAA','<input name="term" placeholder="2026.2" pattern="20[0-9]{2}[.][12]" required>')+'</div>'+buttons('Importar turmas do SIGAA')+'</form><details><summary>Cadastrar turma</summary><form id="create"><div class="grid">'+
+    page('<section><span class="tag">GESTÃO</span><h2>Administrar avaliações</h2><p class="hint"><strong>Administrador conectado: </strong>'+esc(state.email)+'. Você pode abrir e encerrar coletas.</p><ol><li>Confira as turmas importadas ou cadastre uma turma.</li><li>Clique em <strong>Abrir avaliação</strong> na turma desejada.</li><li>Copie o <strong>Link da turma</strong> e compartilhe com os alunos.</li><li>Ao terminar o prazo, clique em <strong>Encerrar coleta</strong>.</li></ol><p>Com uma lista importada, só os e-mails cadastrados podem avaliar. Sem lista, contas @unemat.br acessam por link e contas externas precisam de convite. Cada conta pode responder uma vez por turma.</p><p><a class="button" href="#offers">Abrir ou encerrar turmas</a></p><details open><summary>Importar ou cadastrar turmas</summary><form id="sigaa"><div class="grid">'+field('Semestre para importar do SIGAA','<input name="term" placeholder="2026.2" pattern="20[0-9]{2}[.][12]" required>')+'</div>'+buttons('Importar turmas do SIGAA')+'</form><details><summary>Cadastrar turma</summary><form id="create"><div class="grid">'+
       field('Disciplina',select('course',courses.map((x,i)=>opt(x,i))))+
       field('Semestre','<input name="term" placeholder="2026.2" pattern="20[0-9]{2}[.][12]" required>')+
       field('Identificação da turma','<input name="section" placeholder="Turma A" maxlength="60" required>')+
@@ -420,14 +530,15 @@ function client(config){
       }
       list.before(batch);
     }
-    list.innerHTML=offers.map(o=>'<article class="course-card '+courseClass(o)+'"><h3>'+esc(o.title||courses[o.course])+'</h3><p class="course-meta">'+esc(o.term+' · '+o.section)+'</p><p class="course-status">'+(o.active?'Coleta aberta':o.draft?'Importada · aguardando abertura':'Coleta encerrada')+' · '+o.received+(o.enrolled?'/'+o.enrolled:'')+' respostas</p><div class="controls">'+
-      '<button data-do="report">Ver respostas</button><button data-do="toggle">'+(o.active?'Encerrar coleta':o.draft?'Abrir avaliação':'Reabrir avaliação')+'</button>'+
+    list.innerHTML=offers.map(o=>'<article class="course-card '+courseClass(o)+'"><h3>'+esc(o.title||courses[o.course])+'</h3><p class="course-meta">'+esc(o.term+' · '+o.section)+'</p><p class="course-status">'+(o.active?'Coleta aberta':o.draft?'Importada · aguardando abertura':'Coleta encerrada')+' · '+o.received+(o.enrolled?'/'+o.enrolled:'')+' respostas'+(o.roster_required?' · Acesso pela lista de alunos':' · Sem lista de alunos')+'</p><div class="controls">'+
+      '<button data-do="students">Importar alunos</button><button data-do="report">Ver respostas</button><button data-do="toggle">'+(o.active?'Encerrar coleta':o.draft?'Abrir avaliação':'Reabrir avaliação')+'</button>'+
       (o.active?'<button data-do="link">Link da turma</button><button data-do="invite">Gerar convite externo</button><button data-do="revoke-invite">Revogar convite externo</button>':'')+
       '</div></article>').join('');
     [...list.children].forEach((el,i)=>el.querySelectorAll('button').forEach(button=>button.onclick=async()=>{
       button.disabled=true;message('');output().replaceChildren();
       const o=offers[i], op=button.dataset.do;
       try{
+        if(op==='students'){importStudents(o);return;}
         if(op==='link'){output().innerHTML='<section><h3>Link da turma</h3><textarea readonly>'+esc(location.origin+'/?turma='+encodeURIComponent(o.id))+'</textarea></section>';return;}
         const result=await api(op,{offer:o.id,active:!o.active,count:Number(el.querySelector('input')?.value)});
         if(op==='report')draw(result,true);

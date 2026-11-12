@@ -29,3 +29,13 @@ npm run validate
 ```
 
 A hospedagem aplica os SQL em `drizzle/` ao banco D1 vinculado. O build produz `dist/server/index.js`.
+
+## Importação de alunos
+
+Em Administração e resultados, clique em **Importar alunos** na turma escolhida. Baixe o modelo, preencha `nome` e `email` e salve como CSV UTF-8. As colunas opcionais `semestre` e `turma`, quando preenchidas, devem coincidir com a oferta selecionada. O leitor aceita vírgula ou ponto e vírgula, aspas e até 500 linhas/100 KB.
+
+A prévia mostra erros e duplicados antes da confirmação. A operação adiciona/atualiza a lista da turma de modo atômico, calcula o total de elegíveis e restringe a avaliação aos e-mails cadastrados (inclusive contas Google externas). Não envia e-mails nem cria contas. Uma conta continua podendo responder apenas uma vez por turma. Turmas sem lista mantêm o comportamento anterior até o administrador confirmar a importação. Dados dos alunos ficam no banco privado, nunca no repositório GitHub.
+
+## Situação da migração externa
+
+O GitHub Pages ainda é uma entrada que encaminha ao servidor atual. A migração integral para GitHub Pages + Firebase ainda não foi executada e depende da conexão administrativa ao projeto Firebase. Não trocar a página por uma interface sem backend configurado.
