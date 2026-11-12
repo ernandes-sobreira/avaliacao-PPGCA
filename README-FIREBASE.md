@@ -1,6 +1,6 @@
 # Versão independente: GitHub Pages + Firebase
 
-Preparada na branch `firebase-migration-20261112`. A versão principal continua operacional até concluir a configuração e os testes no Firebase real.
+Publicada na branch `main`. Não depende do servidor ChatGPT Sites.
 
 ## O que já está pronto
 
@@ -13,15 +13,13 @@ Preparada na branch `firebase-migration-20261112`. A versão principal continua 
 - Preservação das 12 ofertas existentes, incluindo a oferta aberta. Como o banco de origem não tinha respostas, alunos ou ações em 12/11/2026, não há avaliações para converter. A primeira entrada do administrador importa o catálogo inicial se o banco estiver vazio, sem sobrescrever documentos existentes.
 - Testes de regras com emulador Firestore: administrador, aluno elegível, aluno fora da lista, convites, turma fechada, dados inválidos, consulta a dados privados e voto duplicado.
 
-## Pendências para ativar
+## Configuração em 12/11/2026
 
-1. Confirmar com o usuário a região permanente do novo Firestore. A escolha sugerida é `southamerica-east1` (São Paulo), mas a criação foi bloqueada pela revisão automática até autorização específica.
-2. Criar Firestore Standard em modo de produção, mantendo acesso fechado inicialmente.
-3. Publicar `firestore.rules` no projeto real. Não usar regras de teste abertas.
-4. Em Authentication → Settings → Authorized domains, autorizar `ernandes-sobreira.github.io` para o login Google. O provedor Google já é usado pela versão anterior; conferir se está ativo.
-5. Testar login institucional, importação CSV e envio com conta de teste. Os testes do emulador não substituem essa validação.
-6. Mesclar a branch e aguardar a publicação do GitHub Pages. O endereço final será `https://ernandes-sobreira.github.io/avaliacao-PPGCA/`.
-7. Depois da verificação, substituir a página antiga por uma indicação do endereço novo para evitar duas coletas simultâneas.
+- Firestore Standard criado em São Paulo (`southamerica-east1`) após autorização explícita do proprietário.
+- Regras publicadas no projeto real, mantendo as listas e as respostas protegidas.
+- Provedor Google ativado e domínio `ernandes-sobreira.github.io` autorizado.
+- Branch de migração incorporada à `main`; GitHub Pages serve a interface completa.
+- Validação real pendente: login institucional e envio completo. A sessão de navegador disponível tem apenas a conta Gmail, sem sessão institucional. Testes de permissões no emulador passaram.
 
 ## Construção e testes
 
