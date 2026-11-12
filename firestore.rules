@@ -1,0 +1,51 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signed() {return request.auth != null && request.auth.token.email_verified == true && request.auth.token.firebase.sign_in_provider == 'google.com';}
+    function admin() {return signed() && request.auth.token.email.lower() == 'ernandes@unemat.br';}
+    function score(v) {return v == null || (v is int && v >= 1 && v <= 5);}
+    function row4(v) {return v is list && v.size() == 4 && score(v[0]) && score(v[1]) && score(v[2]) && score(v[3]);}
+    function row5(v) {return v is list && v.size() == 5 && row4([v[0],v[1],v[2],v[3]]) && score(v[4]);}
+    function comment(v) {return v is string && v.size() <= 1200;}
+    function validBallot() {
+      let d = request.resource.data;
+      return d.keys().hasAll(['grade','level','ratings','comments','privacy','attended','noticeVersion','invitation','createdAt'])
+      && d.keys().hasOnly(['grade','level','ratings','comments','privacy','attended','noticeVersion','invitation','createdAt'])
+      && d.grade is int && d.grade >= 0 && d.grade <= 10
+      && d.level in ['Mestrado','Doutorado','Egresso(a)','Discente especial']
+      && d.ratings is map && d.ratings.keys().hasOnly(['g0','g1','g2','g3'])
+      && row4(d.ratings.g0) && row4(d.ratings.g1) && row5(d.ratings.g2) && row5(d.ratings.g3)
+      && d.comments is list && d.comments.size() == 4
+      && comment(d.comments[0]) && comment(d.comments[1]) && comment(d.comments[2]) && comment(d.comments[3])
+      && d.privacy == true && d.attended == true && d.noticeVersion == 1
+      && d.invitation is string && d.invitation.size() <= 40 && d.createdAt == request.time;
+    }
+    match /ppgcaOffers/{offer} {
+      allow read: if signed();
+      allow create, update: if admin();
+      allow delete: if false;
+      match /roster/{email} {
+        allow get: if admin() || (signed() && request.auth.token.email.lower() == email);
+        allow list, create, update: if admin();
+        allow delete: if false;
+      }
+      match /private/{document} {
+        allow read, create, update, delete: if admin();
+      }
+      match /invites/{code} {
+        allow read, write: if admin();
+      }
+      match /answers/{voter} {
+        function eligible() {
+          let o = get(/databases/$(database)/documents/ppgcaOffers/$(offer)).data;
+          let member = exists(/databases/$(database)/documents/ppgcaOffers/$(offer)/roster/$(request.auth.token.email.lower()));
+          return o.active == 1 && (member || (o.roster_required == 0 && (request.auth.token.email.lower().matches('.*@unemat[.]br') || (request.resource.data.invitation.size() == 32 && exists(/databases/$(database)/documents/ppgcaOffers/$(offer)/invites/$(request.resource.data.invitation))))));
+        }
+        allow read: if admin();
+        allow create: if signed() && request.auth.uid == voter && validBallot() && eligible();
+        allow update, delete: if false;
+      }
+    }
+    match /{document=**} {allow read, write: if false;}
+  }
+}
