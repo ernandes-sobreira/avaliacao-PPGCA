@@ -378,14 +378,14 @@ function client(config){
         const rate=eligible.length?format(100*eligible.reduce((sum,o)=>sum+o.received,0)/eligible.reduce((sum,o)=>sum+o.enrolled,0))+'%':'—';
         const rows=scope.map(o=>{
           const stats=result.classes[o.id];
-          return '<tr><td>'+esc(name(o))+'</td><td>'+o.received+'</td><td>'+format(stats?.grade??null)+'</td>'+
+          return '<tr><th scope="row"><strong>'+esc(o.title||courses[o.course])+'</strong><small>'+esc(o.term+' · '+o.section)+'</small></th><td>'+o.received+'</td><td>'+format(stats?.grade??null)+'</td>'+
             groups.map((_,i)=>'<td>'+format(stats?.axes[i]??null)+'</td>').join('')+
-            '<td><button data-detail="'+esc(o.id)+'">Analisar turma</button></td></tr>';
+            '<td><button data-detail="'+esc(o.id)+'">Ver turma</button></td></tr>';
         }).join('');
         summary.innerHTML='<div class="grid cards dashboard"><div><strong>'+scope.filter(o=>o.active).length+'</strong><br>Turmas abertas</div><div><strong>'+scope.filter(o=>o.received>0).length+' / '+scope.length+'</strong><br>Turmas com respostas</div><div><strong>'+result.stats.n+'</strong><br>Respostas recebidas</div><div><strong>'+format(result.stats.grade)+'</strong><br>Nota geral / 10</div><div><strong>'+rate+'</strong><br>Participação · '+eligible.length+' com total oficial</div></div>'+
           '<p>Cada avaliação enviada pesa igualmente no consolidado. Quem avaliou duas turmas contribui com duas avaliações.</p>'+
           axes(result.stats)+assessment(result.stats)+voices(result.feedback)+
-          '<h3>Comparação entre turmas</h3>'+(rows?'<div class="table"><table><thead><tr><th>Disciplina e turma</th><th>Respostas</th><th>Nota / 10</th>'+groups.map(g=>'<th>'+esc(g[0])+' / 100</th>').join('')+'<th>Detalhe</th></tr></thead><tbody>'+rows+'</tbody></table></div>':'<p>Nenhuma turma nesse período.</p>');
+          '<h3>Comparação entre turmas</h3>'+(rows?'<p class="comparison-note">Nota geral: 0–10 · Eixos: 0–100 · — = dados insuficientes.</p><div class="table comparison-scroll" role="region" aria-label="Comparação entre turmas" tabindex="0"><table class="comparison"><thead><tr><th scope="col">Disciplina / turma</th><th scope="col">Respostas</th><th scope="col">Nota</th><th scope="col" title="Ementa e organização">Ementa</th><th scope="col" title="Prática docente">Docência</th><th scope="col" title="Avaliação e condições de aprendizagem">Aprendizagem</th><th scope="col" title="Formação em Ciências Ambientais">Formação</th><th scope="col">Detalhes</th></tr></thead><tbody>'+rows+'</tbody></table></div><details class="comparison-key"><summary>O que cada eixo avalia?</summary><dl><dt>Ementa</dt><dd>Ementa e organização.</dd><dt>Docência</dt><dd>Prática docente.</dd><dt>Aprendizagem</dt><dd>Avaliação e condições de aprendizagem.</dd><dt>Formação</dt><dd>Formação em Ciências Ambientais.</dd></dl></details>':'<p>Nenhuma turma nesse período.</p>');
         summary.querySelectorAll('[data-detail]').forEach(button=>button.onclick=async()=>{
           button.disabled=true;
           try{draw(await api('report',{offer:button.dataset.detail}),true);output().scrollIntoView({block:'start'});}
@@ -481,6 +481,21 @@ function client(config){
   });
 }
 const css=`
+.comparison-note{font-size:.85rem;color:#496258;margin:.5rem 0 .8rem}
+.comparison-scroll{border:1px solid #d4ded3;border-radius:.65rem}
+.comparison{min-width:840px;table-layout:fixed;font-size:.85rem}
+.comparison th:first-child{width:240px;text-align:left}
+.comparison th:last-child{width:100px}
+.comparison thead{background:#edf3e9}
+.comparison thead th{white-space:nowrap;font-size:.76rem;padding:1rem .4rem;text-align:center;font-weight:750;border-bottom:2px solid #c8d8ca}
+.comparison td{text-align:center;font-variant-numeric:tabular-nums;padding:.9rem .4rem}
+.comparison tbody th{padding:.9rem .8rem;font-weight:400}
+.comparison tbody th strong{display:block;font-weight:600;line-height:1.4}
+.comparison small{display:block;color:#5d7067;font-weight:400;margin-top:.3rem}
+.comparison tbody tr:nth-child(even){background:#f8faf6}
+.comparison button{font-size:.76rem;white-space:nowrap;padding:.45rem .6rem}
+.comparison-key{font-size:.85rem}.comparison-key dl{display:grid;grid-template-columns:120px 1fr;gap:.35rem .7rem}.comparison-key dt{font-weight:700}.comparison-key dd{margin:0}
+
 .brands{display:flex;gap:.8rem;align-items:center;margin:0 0 1.3rem}.brands img{height:65px;max-width:45%;object-fit:contain;background:white;border-radius:.45rem;padding:.35rem}.brands img+img{height:78px}#session{margin-left:auto}#session form{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap}:root{font-family:system-ui,sans-serif;color:#19332c;background:#f3f5ee;line-height:1.55}*{box-sizing:border-box}body{margin:0}header{background:#163d32;color:#fff;padding:2.5rem max(1rem,calc((100% - 900px)/2));border-bottom:5px solid #c6a963}h1{font-size:clamp(2rem,6vw,3.6rem);line-height:1.08;margin:.45rem 0}.tag{font-size:.74rem;letter-spacing:.12em;font-weight:800}header p{color:#d4e5db;margin:.65rem 0 0}nav,main,footer{max-width:900px;margin:auto;padding:1rem}nav,.controls{display:flex;gap:.55rem;flex-wrap:wrap}nav button{background:white;color:#163d32}nav button[aria-pressed=true],button,.button{background:#185140;color:white}button,.button{padding:.6rem .85rem;border:1px solid #185140;border-radius:.55rem;cursor:pointer;font:inherit;font-weight:650;text-decoration:none;display:inline-block}button:disabled{opacity:.55;cursor:wait}section,article{background:white;border:1px solid #d4ded3;border-radius:.85rem;padding:clamp(1rem,3vw,2rem);margin-bottom:1rem}article{padding:1rem}h2,h3{line-height:1.2;margin:.45rem 0 .7rem}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(220px,100%),1fr));gap:1rem}label{display:block;font-weight:600;margin:.55rem 0}input,textarea,select{display:block;width:100%;font:inherit;padding:.55rem;border:1px solid #a4b6aa;border-radius:.45rem;background:white;color:#19332c;margin:.3rem 0}textarea{min-height:6rem;resize:vertical}.check input{width:auto;display:inline-block}fieldset,details{border:1px solid #d4ded3;border-radius:.55rem;margin:1rem 0;padding:.75rem}legend,summary{font-weight:750}summary{cursor:pointer}fieldset label{display:grid;grid-template-columns:1fr minmax(95px,125px);gap:.7rem;align-items:center}fieldset label+label{border-top:1px solid #edf0ea}.hint,.cards>div{background:#e8f1e9;padding:.7rem;border-radius:.45rem}.controls input{width:5rem;display:inline-block}.controls label{margin:0}.table{overflow:auto}table{border-collapse:collapse;width:100%}td,th{text-align:left;padding:.5rem;border-bottom:1px solid #d4ded3}a{color:#185140}.error{color:#a12224}#message:not(:empty){padding:1rem;background:white;border-radius:.5rem}footer{font-size:.9rem;color:#3f5e50}footer p{margin:.2rem 0}button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:3px solid #a8761b;outline-offset:2px}
 header{background:#edf3e9;color:#173b30;border-bottom:1px solid #c8d8ca;padding:0}
 .masthead{max-width:900px;margin:auto;padding:1.4rem 1rem;display:flex;align-items:center;gap:1.5rem}
