@@ -238,6 +238,8 @@ function client(config){
   const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const opt=(label,value=label)=>'<option value="'+esc(value)+'">'+esc(label)+'</option>';
   const name=o=>(o.title||courses[o.course])+' · '+o.term+' · '+o.section;
+  const courseTone=o=>{const title=(o.title||courses[o.course]||'').normalize('NFD').replace(/\p{M}/gu,'').toLowerCase();let code=0;for(const c of title)code=(code*31+c.charCodeAt(0))>>>0;return code%8;};
+  const courseClass=o=>'course-tone course-tone-'+courseTone(o);
   const select=(key,values)=>'<select required name="'+key+'"><option value="">Selecione</option>'+values.join('')+'</select>';
   const field=(label,content)=>'<label>'+label+content+'</label>';
   const buttons=(label)=>'<button type="submit">'+label+'</button>';
@@ -333,7 +335,7 @@ function client(config){
   }
   function draw(result,admin){
     const {offer,stats,comments,action}=result;
-    output().innerHTML='<section><span class="tag">RELATÓRIO POR TURMA</span><h2>'+esc(name(offer))+'</h2><p>'+esc(offer.teachers)+' · '+esc(offer.modality)+'</p><div class="grid cards"><div><strong>'+stats.n+' / '+(offer.enrolled||'—')+'</strong><br>Respostas / elegíveis</div><div><strong>'+(offer.enrolled?format(100*stats.n/offer.enrolled)+'%':'—')+'</strong><br>Participação</div><div><strong>'+format(stats.grade)+'</strong><br>Nota geral média / 10</div></div>'+
+    output().innerHTML='<section class="course-report '+courseClass(offer)+'"><span class="tag">RELATÓRIO POR TURMA</span><h2>'+esc(name(offer))+'</h2><p>'+esc(offer.teachers)+' · '+esc(offer.modality)+'</p><div class="grid cards"><div><strong>'+stats.n+' / '+(offer.enrolled||'—')+'</strong><br>Respostas / elegíveis</div><div><strong>'+(offer.enrolled?format(100*stats.n/offer.enrolled)+'%':'—')+'</strong><br>Participação</div><div><strong>'+format(stats.grade)+'</strong><br>Nota geral média / 10</div></div>'+
       (stats.n<5?'<p>Menos de cinco respostas. Os indicadores quantitativos ficam ocultos.</p>':'')+
       axes(stats)+assessment(stats)+voices(result.feedback,comments)+'<h3>Distribuição das respostas por item</h3>'+stats.groups.map(g=>'<details><summary>'+esc(g.title)+' · '+format(g.index)+' / 100</summary>'+(g.index===null?'':'<meter min="0" max="100" value="'+g.index+'" aria-label="'+esc(g.title)+'"></meter>')+'<p>'+g.n+' respostas válidas no eixo.</p><div class="table"><table><thead><tr><th>Item</th><th>Média</th><th>Válidas</th><th>N/A</th><th>1 · 2 · 3 · 4 · 5</th></tr></thead><tbody>'+g.items.map(q=>'<tr><td>'+esc(q.q)+'</td><td>'+format(q.mean)+'</td><td>'+q.n+'</td><td>'+q.na+'</td><td>'+(q.counts?.join(' · ')||'—')+'</td></tr>').join('')+'</tbody></table></div></details>').join('')+
       (admin?'<form id="action"><h3>Acompanhamento da melhoria</h3>'+field('Ação ou devolutiva','<textarea name="action" required maxlength="1200">'+esc(action?.action)+'</textarea>')+field('Responsável','<input name="owner" required maxlength="120" value="'+esc(action?.owner)+'">')+field('Prazo','<input name="due" type="date" required value="'+esc(action?.due)+'">')+field('Situação','<select name="status">'+['Proposta','Em andamento','Concluída'].map(x=>'<option'+(action?.status===x?' selected':'')+'>'+x+'</option>').join('')+'</select>')+buttons('Salvar acompanhamento')+'</form>':'')+'</section>';
@@ -378,7 +380,7 @@ function client(config){
         const rate=eligible.length?format(100*eligible.reduce((sum,o)=>sum+o.received,0)/eligible.reduce((sum,o)=>sum+o.enrolled,0))+'%':'—';
         const rows=scope.map(o=>{
           const stats=result.classes[o.id];
-          return '<tr><th scope="row"><strong>'+esc(o.title||courses[o.course])+'</strong><small>'+esc(o.term+' · '+o.section)+'</small></th><td>'+o.received+'</td><td>'+format(stats?.grade??null)+'</td>'+
+          return '<tr class="'+courseClass(o)+'"><th scope="row"><strong>'+esc(o.title||courses[o.course])+'</strong><small>'+esc(o.term+' · '+o.section)+'</small></th><td>'+o.received+'</td><td>'+format(stats?.grade??null)+'</td>'+
             groups.map((_,i)=>'<td>'+format(stats?.axes[i]??null)+'</td>').join('')+
             '<td><button data-detail="'+esc(o.id)+'">Ver turma</button></td></tr>';
         }).join('');
@@ -414,7 +416,7 @@ function client(config){
       }
       list.before(batch);
     }
-    list.innerHTML=offers.map(o=>'<article><h3>'+esc(name(o))+'</h3><p>'+(o.active?'Coleta aberta':o.draft?'Importada · aguardando abertura':'Coleta encerrada')+' · '+o.received+(o.enrolled?'/'+o.enrolled:'')+' respostas</p><div class="controls">'+
+    list.innerHTML=offers.map(o=>'<article class="course-card '+courseClass(o)+'"><h3>'+esc(o.title||courses[o.course])+'</h3><p class="course-meta">'+esc(o.term+' · '+o.section)+'</p><p class="course-status">'+(o.active?'Coleta aberta':o.draft?'Importada · aguardando abertura':'Coleta encerrada')+' · '+o.received+(o.enrolled?'/'+o.enrolled:'')+' respostas</p><div class="controls">'+
       '<button data-do="report">Ver respostas</button><button data-do="toggle">'+(o.active?'Encerrar coleta':o.draft?'Abrir avaliação':'Reabrir avaliação')+'</button>'+
       (o.active?'<button data-do="link">Link da turma</button><button data-do="invite">Gerar convite externo</button><button data-do="revoke-invite">Revogar convite externo</button>':'')+
       '</div></article>').join('');
@@ -481,6 +483,25 @@ function client(config){
   });
 }
 const css=`
+.course-tone-0{--course-accent:#145a43;--course-fill:#e9f4ed}
+.course-tone-1{--course-accent:#3d702a;--course-fill:#f0f5e5}
+.course-tone-2{--course-accent:#1b6e63;--course-fill:#e5f3ef}
+.course-tone-3{--course-accent:#557037;--course-fill:#f0f2e6}
+.course-tone-4{--course-accent:#237c47;--course-fill:#e6f5e9}
+.course-tone-5{--course-accent:#35675b;--course-fill:#e8f0ed}
+.course-tone-6{--course-accent:#4f7c24;--course-fill:#edf5df}
+.course-tone-7{--course-accent:#247669;--course-fill:#def1ea}
+#offers .course-card{background:var(--course-fill);border:1px solid #c6d9cd;border-left:7px solid var(--course-accent);padding:1.35rem;margin:0 0 1.25rem;box-shadow:0 3px 8px #173b3008}
+.course-card h3{color:#173b30;line-height:1.4;font-size:1.05rem;margin:0 0 .4rem}
+.course-meta{font-size:.85rem;color:#3b584b;margin:.2rem 0 .7rem;font-weight:600}
+.course-status{display:inline-block;background:#fff;border:1px solid #c6d9cd;border-radius:6px;padding:.3rem .65rem;font-size:.8rem;margin:.1rem 0 1rem;color:#19332c}
+.course-card .controls{padding-top:.85rem;border-top:1px solid #b6cdbb;gap:.5rem}
+.course-card button{background:#fff;color:#193e30;border-color:#93b09d;font-size:.82rem}
+.course-card button[data-do=toggle]{background:var(--course-accent);border-color:var(--course-accent);color:#fff}
+.comparison tbody tr.course-tone{background:var(--course-fill)}
+.comparison tbody tr.course-tone th:first-child{border-left:5px solid var(--course-accent)}
+.course-report{border-top:6px solid var(--course-accent)}
+
 .comparison-note{font-size:.85rem;color:#496258;margin:.5rem 0 .8rem}
 .comparison-scroll{border:1px solid #d4ded3;border-radius:.65rem}
 .comparison{min-width:840px;table-layout:fixed;font-size:.85rem}
